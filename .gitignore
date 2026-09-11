@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Кэш и IDE
+.pytest_cache/
+.cache/
+.idea/
+.vscode/
+*.log
+
+# Сгенерированные документы и временные данные
+out/
+extracted.txt
+
+# Данные пользователей (логины, история)
+RAG System Web UI/data/
+RAG System Web UI/users.json
+
+# Локальная конфигурация (пути, ключи)
+RAG System/rag_engine/settings.json

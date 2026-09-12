@@ -9,10 +9,13 @@ import json
 import logging
 import os
 import re
+import difflib
 import threading
 
 import requests
 from flask import Flask, Response, jsonify, redirect, render_template, request, session, send_file, url_for
+
+from docx import Document
 
 import memo_docx
 
@@ -20,7 +23,7 @@ app = Flask(__name__)
 app.json.ensure_ascii = False
 app.secret_key = os.environ.get("SECRET_KEY", "rag-web-ui-dev-secret")
 # Версия JS-мастера — меняется при правках, чтобы браузер не держал кеш.
-app.config["MEMO_JS_VERSION"] = "20260910-14"
+app.config["MEMO_JS_VERSION"] = "20260910-24"
 
 log = logging.getLogger("werkzeug")
 log.setLevel(logging.ERROR)
@@ -513,6 +516,109 @@ def api_memo_docx():
 def test_parser():
     """Тест парсера файлов."""
     return render_template("test_parser.html")
+
+
+# Список служебных записок для простого запроса (chron: до RAG не дотягивает).
+_MEMO_FOLDER = os.path.abspath(os.path.join(BASE_DIR, "..", "out"))
+_MEMOS_CACHE = {"ts": 0.0, "memos": None}
+_MEMOS_CACHE_TTL = 10
+_MEMO_STOP = {
+    "покажи", "показывай", "найди", "нужно", "дай", "выдай", "дать",
+    "список", "все", "всё", "полный", "служебные", "служебную",
+    "записки", "записку", "записка", "документ", "документы", "какие",
+    "есть", "мне", "их", "содержимое", "содержимым", "по", "про",
+    "о", "и", "в", "на", "с", "не", "то", "что", "где", "как", "это",
+    "очень", "просто", "те", "которых", "который", "которые", "у",
+}
+
+
+def _all_memos_text() -> list:
+    """Все служебные записки (docx из каталога ../out) с содержимым."""
+    import time as _t
+    now = _t.time()
+    cached = _MEMOS_CACHE["memos"]
+    if cached is not None and (now - _MEMOS_CACHE["ts"]) < _MEMOS_CACHE_TTL:
+        return cached
+
+    memos = []
+    if os.path.isdir(_MEMO_FOLDER):
+        for name in sorted(os.listdir(_MEMO_FOLDER)):
+            if not name.lower().endswith(".docx") or name.startswith("~"):
+                continue
+            full = os.path.join(_MEMO_FOLDER, name)
+            try:
+                doc = Document(full)
+                parts = [p.text or "" for p in doc.paragraphs]
+                for tbl in doc.tables:
+                    for row in tbl.rows:
+                        row_text = " | ".join(c.text or "" for c in row.cells)
+                        if row_text.strip():
+                            parts.append(row_text)
+                text = "\n".join(parts).strip()
+                if not text:
+                    continue
+            except Exception as e:
+                print(f"[WARN] Не удалось прочитать служебку {full}: {e}")
+                continue
+            memos.append({
+                "file_name": name,
+                "file_path": full,
+                "text": text,
+            })
+    _MEMOS_CACHE["memos"] = memos
+    _MEMOS_CACHE["ts"] = now
+    return memos
+
+
+def _filter_memos(memos: list, query: str) -> list:
+    """Только записки, где есть значимые слова запроса (с опечатками)."""
+    query = (query or "").strip().lower()
+    if not query:
+        return memos
+
+    words = [w for w in query.split() if len(w) > 1 and w not in _MEMO_STOP]
+    if not words:
+        return memos
+
+    doc_words = []
+    for m in memos:
+        toks = set(re.findall(r"[а-яёa-z]+", m["text"].lower()))
+        toks = {w for w in toks if len(w) > 2 and w not in _MEMO_STOP}
+        doc_words.append(toks)
+
+    def _matches(word, text_words):
+        if word in text_words:
+            return True
+        for tw in text_words:
+            if abs(len(tw) - len(word)) > 3:
+                continue
+            if difflib.SequenceMatcher(None, word, tw).ratio() >= 0.8:
+                return True
+            common = 0
+            for a, b in zip(word, tw):
+                if a == b:
+                    common += 1
+                else:
+                    break
+            if common >= 6:
+                return True
+        return False
+
+    scored = []
+    for m, tw in zip(memos, doc_words):
+        hits = sum(1 for w in words if _matches(w, tw))
+        if hits:
+            scored.append((hits, m))
+    scored.sort(key=lambda pair: (-pair[0], pair[1]["file_name"]))
+    return [m for _, m in scored]
+
+
+@app.route("/api/memos", methods=["GET"])
+def api_memos():
+    """Служебные записки с содержимым; q — фильтр по тексту запроса."""
+    query = request.args.get("q", "")
+    memos = _filter_memos(_all_memos_text(), query)
+    return jsonify({"memos": memos})
 
 
 def get_json(endpoint, timeout=5):

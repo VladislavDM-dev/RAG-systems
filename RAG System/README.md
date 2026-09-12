@@ -7,7 +7,9 @@
 - **Ollama** — нативный API;
 - **LM Studio** — OpenAI-совместимый API.
 
-Этот проект — выделенный из `IndexDocuments` движок + чистый API-слой. Эндпоинты собственные, не копия Ollama/LM Studio.
+Взаимодействие происходит через собственный REST API `/rag/*`; веб-интерфейс
+(чат и мастер служебных записок) живёт в отдельном проекте
+[`RAG System Web UI`](../RAG%20System%20Web%20UI/README.md) и проксирует запросы сюда.
 
 ---
 
@@ -26,7 +28,7 @@ pip install -r requirements.txt
 ## Запуск
 
 ```bash
-python app.py
+.\.venv\Scripts\python.exe -X utf8 app.py
 ```
 
 Сервис поднимется на `http://127.0.0.1:11455/rag`.
@@ -38,7 +40,7 @@ python app.py
 ```
 
 Тесты не требуют запущенного Ollama/LM Studio: парсинг проверяется на реальных
-файлах из каталога `out` (49 служебных записок `.docx`), API — на Flask test client.
+файлах из каталога `out` (служебные записки `.docx`), API — на Flask test client.
 Каталог `out` должен находиться рядом с проектом (`C:\Scripts\RAG systems\out`).
 
 При прогоне файл `rag_engine/settings.json` временно приводится к значениям по
@@ -239,3 +241,8 @@ RAG System/
     ├── pdf_parser.py          # .pdf → OCR (ABBYY) → Markdown
     └── file_hash_manager.py   # SQLite-хэши файлов
 ```
+
+## Связанные проекты
+
+- [../RAG System Web UI/README.md](../RAG%20System%20Web%20UI/README.md) — веб-интерфейс: чат, админка, мастер служебных записок; работает поверх этого API.
+- [../generate_memos.py](../generate_memos.py) — массовая генерация служебных записок по шаблону `mmo.dotx` в каталог `../out` (заполнение полей и footer через Word COM).

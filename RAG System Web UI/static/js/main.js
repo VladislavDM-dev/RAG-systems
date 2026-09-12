@@ -159,6 +159,7 @@ async function sendServerQuery() {
     appendMessage(question, true);
     questionInput.value = '';
     last_question = question;
+    ensureConversation(question);
 
     const botMsg = appendMessage('', false, []);
     botMsg.addDots();
@@ -299,7 +300,112 @@ function sendQuery() {
         MemoWizard.handleInput(text);
         return;
     }
-    sendServerQuery();
+    // Простой запрос: показываем полный список служебных записок.
+    showAllMemos();
+}
+
+// Простой запрос (не команда и не мастер) выводит все служебные записки
+// из базы вместе с их содержимым — без обращения к LLM.
+async function showAllMemos() {
+    const question = questionInput.value.trim();
+    if (!question) return;
+    if (isGenerating) return;
+    if (!inputsUnlocked) return;
+
+    isGenerating = true;
+    unlockInputs(false);
+
+    appendMessage(question, true);
+    questionInput.value = '';
+    last_question = question;
+    ensureConversation(question);
+
+    const botMsg = appendMessage('', false, []);
+    botMsg.addDots();
+
+    try {
+        const response = await fetch('/api/memos?q=' + encodeURIComponent(question));
+        if (!response.ok) throw new Error("HTTP " + response.status);
+        const data = await response.json();
+        const memos = Array.isArray(data.memos) ? data.memos : [];
+        botMsg.removeDots();
+        if (!memos.length) {
+            botMsg.updateText('По запросу "' + question + '" служебные записки не найдены. Попробуйте уточнить тему.');
+            await saveConversation(last_question, 'По запросу "' + question + '" служебные записки не найдены.', []);
+            return;
+        }
+        botMsg.content.innerHTML = memoListHtml(memos, question);
+        await saveConversation(
+            last_question,
+            'Найдено служебных записок: ' + memos.length + ' шт. по запросу "' + question + '"',
+            memos.map(m => ({ file_name: m.file_name, file_path: m.file_path, score: null })),
+            { memoList: memos }
+        );
+    } catch (e) {
+        botMsg.removeDots();
+        botMsg.updateText('Ошибка получения служебных записок: ' + e.message);
+    } finally {
+        isGenerating = false;
+        unlockInputs(true);
+    }
+}
+
+// Рендер HTML-списка служебных записок (используется при выводе и при
+// восстановлении диалога после обновления страницы).
+function memoListHtml(memos, questionLabel) {
+    const memosArr = Array.isArray(memos) ? memos : [];
+    const items = memosArr.map(m => {
+        const title = (m.file_name || '').replace(/\.docx$/i, '');
+        const body = (m.text || '').trim();
+        const path = m.file_path || '';
+        return '<li>' + escapeHtml(title) +
+            '<div class="memo-meta"><span class="memo-path">' + escapeHtml(path) + '</span>' +
+            '<button type="button" class="btn btn-sm btn-outline-secondary memo-copy" data-path="' + escapeHtml(path) + '" title="Скопировать путь к файлу">Скопировать путь</button>' +
+            '<button type="button" class="btn btn-sm btn-outline-primary memo-fav" data-title="' + escapeHtml(title) + '" data-path="' + escapeHtml(path) + '" title="Сохранить служебную записку в избранное">Сохранить в избранное</button></div>' +
+            '<div class="memo-list-body">' + escapeHtml(body) + '</div></li>';
+    }).join('\n');
+    return '<div class="memo-list"><h6><b>Служебные записки по запросу "' + (questionLabel || '') + '" (' + memosArr.length + '):</b></h6><ol>' + items + '</ol></div>';
+}
+
+// Сохранение отдельной служебной записки в избранное (без диалога).
+async function saveMemoToFavorites(btn) {
+    const title = btn.dataset.title || '';
+    const path = btn.dataset.path || '';
+    const memo = btn.closest('li')?.querySelector('.memo-list-body')?.textContent || '';
+    const question = 'Служебная записка: ' + title;
+    await saveAnswerToFavorites(question, memo || question, [
+        { file_name: title + '.docx', file_path: path, score: null }
+    ]);
+    const old = btn.innerHTML;
+    btn.innerHTML = '<i class="bi bi-bookmark-check-fill"></i> В избранном';
+    btn.classList.add('btn-success');
+    btn.classList.remove('btn-outline-primary');
+    setTimeout(() => { btn.innerHTML = old; btn.classList.remove('btn-success'); btn.classList.add('btn-outline-primary'); }, 2000);
+}
+
+async function copyMemoPath(btn) {
+    const path = btn.dataset.path || '';
+    try {
+        await navigator.clipboard.writeText(path);
+        const old = btn.textContent;
+        btn.textContent = 'Скопировано';
+        setTimeout(() => { btn.textContent = old; }, 1200);
+    } catch (e) {
+        const ta = document.createElement('textarea');
+        ta.value = path;
+        document.body.appendChild(ta);
+        ta.select();
+        try {
+            document.execCommand('copy');
+            const old = btn.textContent;
+            btn.textContent = 'Скопировано';
+            setTimeout(() => { btn.textContent = old; }, 1200);
+        } catch (e2) {
+            btn.textContent = 'Ошибка';
+            setTimeout(() => { btn.textContent = 'Скопировать путь'; }, 1200);
+        }
+        document.body.removeChild(ta);
+    }
 }
 
 // === Команды чата (подсказка при вводе "/") ===
@@ -366,13 +472,44 @@ function showCommandsHelp() {
 
 // === История на сервере ===
 
-async function saveConversation(question, answer, sources) {
+// Создаёт/гарантирует диалог в истории сразу при первом сообщении (до ответа).
+// Каждое следующее сообщение без активного диалога открывает новый.
+async function ensureConversation(question) {
+    if (activeConversationId) return;
+    const conversation = {
+        id: generateUUID(),
+        question: question,
+        messages: [
+            { role: 'user', text: question },
+        ],
+        previewText: question.substring(0, 150),
+        lastAnswer: '',
+        sources: [],
+        date: Date.now(),
+        lastAccessed: Date.now()
+    };
+    activeConversationId = conversation.id;
+    try {
+        await fetch('/api/conversations', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(conversation)
+        });
+    } catch (e) {
+        console.error("Ошибка сохранения диалога:", e);
+    }
+    loadServerHistory();
+}
+
+async function saveConversation(question, answer, sources, options = {}) {
+    const botMsgData = { role: 'bot', text: answer, sources: sources };
+    if (Array.isArray(options.memoList)) botMsgData.memoList = options.memoList;
     const conversation = {
         id: activeConversationId || generateUUID(),
         question: question,
         messages: [
             { role: 'user', text: question },
-            { role: 'bot', text: answer, sources: sources }
+            botMsgData
         ],
         previewText: answer.substring(0, 150),
         lastAnswer: answer,
@@ -621,7 +758,11 @@ function loadConversation(convId) {
 
         messages.forEach(msg => {
             const msgObj = appendMessage(msg.text, msg.role === 'user', []);
-            if (msg.role === 'bot' && msg.sources && msg.sources.length > 0) {
+            if (msg.role === 'bot' && Array.isArray(msg.memoList) && msg.memoList.length) {
+                const questionLabel = msg.question || conv.question || '';
+                const html = memoListHtml(msg.memoList, questionLabel);
+                msgObj.content.innerHTML = html;
+            } else if (msg.role === 'bot' && msg.sources && msg.sources.length > 0) {
                 msgObj.showSources(msg.sources);
             }
         });
@@ -715,6 +856,9 @@ let wasSyncing = false;
 async function checkSyncStatus() {
     try {
         const response = await fetch('/rag/index/status');
+        if (!response.ok) {
+            throw new Error("HTTP " + response.status);
+        }
         const data = await response.json();
 
         if (data.is_syncing || !data.initialized) {
@@ -726,8 +870,9 @@ async function checkSyncStatus() {
                 ? data.sync_files.map(item => `${item.file} (${item.operation})`).join('<br>')
                 : 'Нет информации о файлах';
             document.getElementById('sync-file-text').innerHTML = html;
-            document.getElementById('sync-progress-bar').style.width = `${data.progress}%`;
-            document.getElementById('sync-percent-text').textContent = `${data.progress}%`;
+            const progress = Number(data.progress) || 0;
+            document.getElementById('sync-progress-bar').style.width = `${progress}%`;
+            document.getElementById('sync-percent-text').textContent = `${progress}%`;
         } else {
             if (document.getElementById('sync-overlay').classList.contains('active')) {
                 hideSyncOverlay(true);
@@ -851,6 +996,10 @@ document.addEventListener('DOMContentLoaded', () => {
         if (wrap && !wrap.contains(e.target) && e.target.id !== 'question-input') {
             hideCommandMenu();
         }
+        const copyBtn = e.target.closest('.memo-copy');
+        if (copyBtn) copyMemoPath(copyBtn);
+        const favBtn = e.target.closest('.memo-fav');
+        if (favBtn) saveMemoToFavorites(favBtn);
     });
 
     const clearHistoryBtn = document.getElementById('clearHistoryBtn');
@@ -867,16 +1016,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
     loadServerHistory();
 
-    // Восстановление последней сессии: если есть незавершённый мастер — вернуть его,
-    // иначе открыть последний диалог из истории.
+    // Всегда открываем последний диалог (мастер служебной записки восстанавливается
+    // самим Мастером через localStorage, но не должен подменять чат).
     setTimeout(() => {
-        if (typeof MemoWizard !== 'undefined' && typeof MemoWizard.restoreSession === 'function') {
-            MemoWizard.restoreSession().then(restored => {
-                if (!restored) loadLastConversation();
-            });
-        } else {
-            loadLastConversation();
-        }
+        loadLastConversation();
     }, 300);
 
     setInterval(checkSyncStatus, 500);

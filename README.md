@@ -1,74 +1,60 @@
 # RAG системы
 
-Репозиторий содержит RAG-систему поиска по документам (`.doc`, `.docx`, `.pdf`),
-разделённую на **общее ядро** и два **независимых интерфейса**.
+Репозиторий содержит локальную RAG-систему поиска по корпоративным документам
+(`.doc`, `.docx`, `.pdf`) и генератор служебных записок на её основе.
 
 ## Структура
 
 ```
 RAG systems/
-├── core/   # Ядро RAG-системы (без UI): движок LlamaIndex+FAISS, парсеры, хэши, настройки
-├── api/    # Web-интерфейс + REST API (Flask) поверх core
-├── cli/    # Консольный интерфейс (интерактивное меню) поверх core
-├── README.md
-└── ...     # прочие рабочие файлы и скрипты проекта
+├── RAG System/            # Ядро: RAG-движок + собственный Flask API (порт 11455, префикс /rag)
+├── RAG System Web UI/     # Веб-интерфейс (чат, админка, мастер служебных записок), порт 80
+├── docx_templates/        # Шаблон служебной записки (mmo.dotx)
+├── generate_memos.py      # Пакетная генерация записок по шаблону через Word COM
+├── out/                   # Сгенерированные .docx (исключён из git)
+├── IndexDocuments/        # Исходный проект, из которого выделен движок
+└── README.md
 ```
 
-```mermaid
-graph LR
-    subgraph interfaces[Интерфейсы]
-        A[api/ — Flask web + REST API]
-        C[cli/ — консоль]
-    end
-    core[core/ — ядро RAG]
-    A --> core
-    C --> core
-    core --> ollama[(Ollama + модели)]
-    core --> faiss[(Индекс FAISS, кэш)]
-```
+## Компоненты
 
-## Возможности
+| Компонент | Назначение |
+|-----------|------------|
+| `RAG System` | Индексация (LlamaIndex + FAISS), парсеры `.doc`/`.docx`/`.pdf`, генерация через Ollama / LM Studio, REST API `/rag/*` |
+| `RAG System Web UI` | Чат (SSE-стрим), админ-панель, мастер служебных записок (`/create`), история диалогов и избранного на сервере |
+| `generate_memos.py` | Массовая генерация 200 записок в `out/` по шаблону, с заполнением полей и footer (исполнитель, телефон) через Word COM |
 
-- Инкрементальная синхронизация индекса по файлам (по хэшам).
-- Парсинг `.doc` (Word COM), `.docx` (python-docx), `.pdf` (ABBYY FineReader OCR).
-- Два режима поиска: перебор по ключевым словам без ИИ и RAG-поиск с ИИ.
-- Управление моделями Ollama, чанками, папками через web-админку, REST API или консоль.
-
-## Требования
-
-- Windows (парсеры используют COM Word и ABBYY FineReader 15 для `.doc`/`.pdf`).
-- Запущенный сервер Ollama с установленными моделями (см. `core/settings.json`).
-- Python 3.10+ (используется синтаксис `X | None`, `list[str]`).
-
-## Установка
+## Быстрый старт
 
 ```powershell
-# из корня проекта «RAG systems»
-pip install -e ./core
-pip install -r ./api/requirements.txt
+# 1. Ядро (RAG API) — порт 11455
+cd "C:\Scripts\RAG systems\RAG System"
+.\.venv\Scripts\python.exe app.py
+
+# 2. Веб-интерфейс — порт 80
+cd "C:\Scripts\RAG systems\RAG System Web UI"
+.\.venv\Scripts\python.exe -X utf8 app.py
 ```
 
-> Пакет `core` ставить не обязательно — `api/app.py` и `cli/cli.py` сами добавляют
-> корень проекта в `sys.path`. Установка нужна для импорта `core` из произвольных
-> каталогов.
+Локальные модели: **Ollama** или **LM Studio** (см. `RAG System/rag_engine/settings.json`).
 
-## Запуск
+## Ключевые сценарии
 
-### Web + REST API
-
-```powershell
-python api/app.py                 # порт 80 (может требовать права администратора)
-$env:RAG_PORT = 8080; python api/app.py   # другой порт
-```
-
-### Консоль
-
-```powershell
-python cli/cli.py
-```
+- **Чат с базой знаний** — вопросы по документам, ответы RAG с источниками.
+- **Мастер служебной записки** — команда `/create <тема>` в чате: одно окно с
+  вариантами текста (RAG), полями шапки (шаблон `mmo.dotx`), предпросмотром и
+  скачиванием `.docx`. Связанные пары полей и состояние мастера
+  восстанавливаются после обновления страницы.
+- **Генерация записок** — `python generate_memos.py` (нужен `win32com`,
+  см. README в `RAG System Web UI`).
 
 ## Документация
 
-- [core/README.md](core/README.md) — ядро: настройки, кэш, API.
-- [api/README.md](api/README.md) — запуск web, таблица REST-эндпоинтов.
-- [cli/README.md](cli/README.md) — консольное меню.
+- [RAG System/README.md](RAG%20System/README.md) — ядро: настройки, API `/rag/*`, тесты.
+- [RAG System Web UI/README.md](RAG%20System%20Web%20UI/README.md) — запуск, страницы, мастер записок.
+
+## Требования
+
+- Windows (парсеры используют Word COM для `.doc` и ABBYY FineReader для `.pdf`).
+- Python 3.10+ с `-X utf8`.
+- Запущенный Ollama или LM Studio с моделями (LLM + эмбеддинги).

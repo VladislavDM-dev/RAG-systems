@@ -23,7 +23,7 @@ app = Flask(__name__)
 app.json.ensure_ascii = False
 app.secret_key = os.environ.get("SECRET_KEY", "rag-web-ui-dev-secret")
 # Версия JS-мастера — меняется при правках, чтобы браузер не держал кеш.
-app.config["MEMO_JS_VERSION"] = "20260910-24"
+app.config["MEMO_JS_VERSION"] = "20260910-31"
 
 log = logging.getLogger("werkzeug")
 log.setLevel(logging.ERROR)
@@ -532,6 +532,44 @@ _MEMO_STOP = {
 }
 
 
+def extract_memo_body(text: str) -> str:
+    """Вырезает тело служебной записки: без шапки (Кому/№/дата) и подписи.
+
+    Формат готового документа: «Кому: …», «Служебная записка № … от …»,
+    затем тело, затем «С уважением, …». Возвращает текст между ними,
+    при невозможности разобрать — весь текст.
+    """
+    lines = (text or "").splitlines()
+
+    def line_key(idx: int) -> str:
+        return lines[idx].strip().lower()
+
+    start = next((i for i, ln in enumerate(lines)
+                  if line_key(i).startswith("служебная записка №")), None)
+    end = next((i for i, ln in enumerate(lines)
+                if line_key(i).startswith("с уважением")), None)
+
+    if start is None:
+        return (text or "").strip()
+    body_lines = lines[start + 1: end]
+    while body_lines and not body_lines[0].strip():
+        body_lines.pop(0)
+    while body_lines and not body_lines[-1].strip():
+        body_lines.pop()
+    body = "\n".join(body_lines).strip()
+    return body or (text or "").strip()
+
+
+def _extract_contact(header_parts: list) -> tuple:
+    """Из текста колонтитула достаёт (ФИО, телефон): телефон — по маске,
+    ФИО — первая непустая строка без признаков телефона."""
+    phone = next((p.strip() for p in header_parts
+                  if re.search(r"\+?7\s*[\d\(\)\-]{5,}", p)), "")
+    executor = next((p.strip() for p in header_parts
+                     if p.strip() and not re.search(r"\+?7\s*[\d\(\)\-]{5,}", p)), "")
+    return executor or "", phone or ""
+
+
 def _all_memos_text() -> list:
     """Все служебные записки (docx из каталога ../out) с содержимым."""
     import time as _t
@@ -555,6 +593,21 @@ def _all_memos_text() -> list:
                         if row_text.strip():
                             parts.append(row_text)
                 text = "\n".join(parts).strip()
+
+                # Исполнитель и телефон живут в колонтитуле (footer) документа.
+                header_parts = []
+                for sec in doc.sections:
+                    for part in (sec.footer, sec.header,
+                                 sec.first_page_footer, sec.first_page_header):
+                        try:
+                            for p in part.paragraphs:
+                                t = (p.text or "").strip()
+                                if t:
+                                    header_parts.append(t)
+                        except Exception:
+                            continue
+                executor, phone = _extract_contact(header_parts)
+
                 if not text:
                     continue
             except Exception as e:
@@ -564,6 +617,9 @@ def _all_memos_text() -> list:
                 "file_name": name,
                 "file_path": full,
                 "text": text,
+                "body": extract_memo_body(text),
+                "executor": executor,
+                "phone": phone,
             })
     _MEMOS_CACHE["memos"] = memos
     _MEMOS_CACHE["ts"] = now

@@ -163,7 +163,7 @@ const MemoWizard = {
         this.botMsg = appendMessage('', false, []);
         this.botMsg.row.classList.add('memo-wide');
         this.botMsg.addDots();
-        this.botMsg.updateText('Подбираю **варианты записки и значения полей** из базы знаний (RAG)...');
+        this.botMsg.updateText('Ищу **готовые служебные записки** по теме и значения полей из базы знаний...');
         isGenerating = true;
         unlockInputs(false);
 
@@ -177,29 +177,29 @@ const MemoWizard = {
                    { key: 'recipient_name', label: 'Кому (ФИО)', hint: '' },
                    { key: 'memo_number', label: 'Номер служебной записки', hint: '' },
                    { key: 'date', label: 'Дата', hint: '' },
-                   { key: 'sender_position', label: 'От (должность)', hint: '' },
-                   { key: 'sender_short_name', label: 'От (ФИО, кратко)', hint: '' }];
+                   { key: 'sender_position', label: 'Подписывающее лицо (должность)', hint: '' },
+                   { key: 'sender_short_name', label: 'Подписывающее лицо (ФИО, кратко)', hint: '' }];
             this.fieldDefsNoBody = fieldDefs.filter(d => d.key !== 'body');
+            // «От» — это подписывающее лицо.
+            this.fieldDefsNoBody.forEach(d => {
+                if (d.key === 'sender_position') d.label = 'Подписывающее лицо (должность)';
+                else if (d.key === 'sender_short_name') d.label = 'Подписывающее лицо (ФИО, кратко)';
+            });
             this.keys = this.fieldDefsNoBody.map(d => d.key);
 
-            // 2. варианты тела + варианты полей параллельно
-            const styles = [
-                'Составь краткое и формальное тело служебной записки по теме, используя данные из предоставленных документов (RAG).',
-                'Составь подробное тело служебной записки по теме с фактами, цифрами, датами и ссылками на документы из RAG.',
-                'Составь тело служебной записки по теме и предложи конкретные меры и обоснования на основе предоставленных документов (RAG).',
-            ];
-            const temps = [0.4, 0.7, 1.0];
+            // 2. варианты тела из готовых документов по теме (без изменений)
+            const memoResp = await fetch('/api/memos?q=' + encodeURIComponent(this.topic));
+            const memoData = await memoResp.json().catch(() => ({ memos: [] }));
+            const found = (Array.isArray(memoData.memos) ? memoData.memos : [])
+                .map((m) => ({
+                    text: (m.body || m.text || '').trim(),
+                    sources: m.file_path ? [{ file_name: m.file_name, file_path: m.file_path, score: null }] : [],
+                    idx: 0,
+                    executor: (m.executor || '').trim(),
+                    phone: (m.phone || '').trim(),
+                }));
+            const results = found.slice(0, 10).map((v, i) => ({ ...v, idx: i + 1 }));
 
-            const bodyTasks = styles.map((style, i) =>
-                streamAgentRequest({
-                    prompt: `Тема служебной записки: «${this.topic}».\n${style}\nВыдай только тело записки, с абзацами, без шапки и подписи. Вариант ${i + 1}.`,
-                    system_prompt: MEMO_BODY_SYSTEM_PROMPT,
-                    temperature: temps[i],
-                }).then(res => ({ text: res.answer, sources: res.sources, idx: i + 1 }))
-            );
-
-            const results = await Promise.all(bodyTasks);
-            results.sort((a, b) => a.idx - b.idx);
             this.variants = results;
             this.chosen = 0;
 
@@ -207,6 +207,24 @@ const MemoWizard = {
             try {
                 fieldOptions = await this.generateFieldOptions(this.keys);
             } catch (e) { /* поля останутся пустыми — можно ввести вручную */ }
+
+            // Реальные исполнители и телефоны из колонтитулов найденных документов.
+            // Берём пары (executor, phone) из ОДНОГО документа, чтобы индекс в списке
+            // исполнителей соответствовал индексу в списке телефонов (как у получателя).
+            const seenPair = new Set();
+            const pairs = [];
+            found.forEach(r => {
+                if (!r.executor || !r.phone) return;
+                const k = r.executor + '|' + r.phone;
+                if (seenPair.has(k)) return;
+                seenPair.add(k);
+                pairs.push({ executor: r.executor, phone: r.phone });
+            });
+            const pairsSlice = pairs.slice(0, 6);
+            if (pairsSlice.length) {
+                fieldOptions.executor = pairsSlice.map(p => p.executor);
+                fieldOptions.phone = pairsSlice.map(p => p.phone);
+            }
             this.fieldOptions = fieldOptions;
 
             this.renderFields(this.fieldDefsNoBody, {}, [results[0] ? results[0].text : ''], true, true);
@@ -321,9 +339,14 @@ const MemoWizard = {
                { key: 'recipient_name', label: 'Кому (ФИО)', hint: '' },
                { key: 'memo_number', label: 'Номер служебной записки', hint: '' },
                { key: 'date', label: 'Дата', hint: '' },
-               { key: 'sender_position', label: 'От (должность)', hint: '' },
-               { key: 'sender_short_name', label: 'От (ФИО, кратко)', hint: '' }];
+               { key: 'sender_position', label: 'Подписывающее лицо (должность)', hint: '' },
+               { key: 'sender_short_name', label: 'Подписывающее лицо (ФИО, кратко)', hint: '' }];
         this.fieldDefsNoBody = fieldDefs.filter(d => d.key !== 'body');
+        // «От» — это подписывающее лицо.
+        this.fieldDefsNoBody.forEach(d => {
+            if (d.key === 'sender_position') d.label = 'Подписывающее лицо (должность)';
+            else if (d.key === 'sender_short_name') d.label = 'Подписывающее лицо (ФИО, кратко)';
+        });
         this.keys = this.fieldDefsNoBody.map(d => d.key);
 
         this.botMsg = appendMessage('', false, []);
@@ -368,7 +391,15 @@ const MemoWizard = {
             const manualOnly = key === 'date' || key === 'memo_number';
             const isDate = key === 'date';
             const opts = (fieldOptions[key] || []).filter(v => v && String(v).trim());
-            const cur = prefill[key] || '';
+            let cur = prefill[key] || '';
+            if (isDate && !cur) {
+                // Автоматически подставляем текущую дату.
+                const now = new Date();
+                const dd = String(now.getDate()).padStart(2, '0');
+                const mm = String(now.getMonth() + 1).padStart(2, '0');
+                cur = `${dd}.${mm}.${now.getFullYear()}`;
+                this.fields[key] = cur;
+            }
             let optionsHtml = '';
             const optionButtons = [];
             if (!manualOnly && opts.length) {
@@ -533,13 +564,27 @@ const MemoWizard = {
         const payload = {
             // Prompt — это RAG-запрос: по теме система ищет нужные документы, а затем
             // из контекста берутся реалистичные данные для полей.
-            prompt: `Служебная записка: ${this.topic}. Подготовь данные для её шапки — кому адресована, номер, дата, от кого. Используй сведения из контекста документов (ФИО, должности, отделы, даты).`,
-            system_prompt: 'Ты — помощник, который подбирает данные для шаблонов деловых документов только из контекста. Верни ОДИН JSON-объект вида {"ключ": ["вариант1", "вариант2"], ...} для ВСЕХ ключей из схемы, по 2-3 варианта на каждый ключ. НЕ возвращай массивы списком и NИЧЕГО кроме этого JSON-объекта — без пояснений и обрамляющего текста. Схема ключей:\n' + schemaLines + '\nВАЖНО: поля "recipient_position" и "recipient_name" (также "sender_position" и "sender_short_name", "executor" и "phone") — это ПАРЫ: вариант под индексом i в одном поле должен соответствовать варианту под индексом i в парном (один и тот же человек, его должность/телефон). Поля "date" и "memo_number" не связаны с другими.',
-            temperature: 0.3,
+            prompt: `Служебная записка: ${this.topic}. Подготовь данные для её шапки — кому адресована, номер, дата, от кого, исполнитель, телефон. Используй сведения из контекста документов.`,
+            system_prompt: 'Ты — помощник, который подбирает данные для шаблонов деловых документов. Верни ОДИН JSON-объект вида {"ключ": ["вариант1", "вариант2", ...]...} для ВСЕХ ключей из схемы, по 5-6 вариантов на каждый ключ. Значения бери из контекста, а если в контексте нет данных для ключа — придумай реалистичные правдоподобные значения. Для ключа "executor" давай ТОЛЬКО Фамилию и инициалы сотрудников вида "Иванов И.И." (не должности, не отделы). Для ключа "phone" давай номера телефонов вида "+7 (900) 123-45-67". НЕ возвращай массивы списком и NИЧЕГО кроме этого JSON-объекта — без пояснений и обрамляющего текста. Схема ключей:\n' + schemaLines + '\nВАЖНО: поля "recipient_position" и "recipient_name" (также "sender_position" и "sender_short_name", "executor" и "phone") — это ПАРЫ: вариант под индексом i в одном поле должен соответствовать варианту под индексом i в парном (один и тот же человек, его должность/телефон). Поля "date" и "memo_number" не связаны с другими.',
+            temperature: 0.5,
         };
         const res = await streamAgentRequest(payload);
         const raw = parseMemoJson(res.answer);
-        return normalizeFieldOptions(raw, keys);
+        const out = normalizeFieldOptions(raw, keys);
+        // Fallback: если модель не дала вариантов исполнителя/телефона — подставляем
+        // правдоподобные значения, чтобы поле не оставалось пустым.
+        Object.keys(keys || []).forEach(k => {
+            if ((out[keys[k]] || []).length) return;
+            if (keys[k] === 'executor') {
+                const names = (out.sender_short_name || []).slice(0, 3)
+                    .map(n => (n || '').trim()).filter(Boolean);
+                if (names.length) out.executor = names;
+                else out.executor = ['Иванов И.И.', 'Петров П.П.', 'Сидоров С.С.'];
+            } else if (keys[k] === 'phone') {
+                out.phone = ['+7 (900) 123-45-67', '+7 (903) 555-01-02', '+7 (915) 777-35-40'];
+            }
+        });
+        return out;
     },
 
     collectFields() {
@@ -622,7 +667,9 @@ const MemoWizard = {
 
     async saveAndDownload(previewText) {
         const f = this.fields || {};
-        this.fields.body = previewText;
+        // В {{ body }} шаблона должен попасть только текст тела, а не весь
+        // превью (в нём уже есть шапка/подпись, которые шаблон ставит сам).
+        const bodyText = (this.fields.body || this.variants[this.chosen]?.text || '').trim();
         try {
             const res = await fetch('/api/memo/docx', {
                 method: 'POST',
@@ -633,7 +680,7 @@ const MemoWizard = {
                     memo_number: f.memo_number || '',
                     department: f.department || '',
                     date: f.date || '',
-                    body: previewText,
+                    body: bodyText,
                     sender_position: f.sender_position || '',
                     sender_short_name: f.sender_short_name || '',
                     executor: f.executor || '',
@@ -670,7 +717,9 @@ const MemoWizard = {
             this.chosen != null ? (this.variants[this.chosen].sources || []) : []
         );
         this.sendBot('✅ Служебная записка сохранена (раздел «Ответы» и диалог истории) и файл .docx скачан.');
-        this.reset();
+        // Состояние мастера не сбрасываем: после сохранения можно вернуться
+        // к редактированию (кнопка «Редактировать» на превью). Полный сброс
+        // выполняет кнопка «Новая записка».
     },
 
     sendBot(text) {
@@ -747,7 +796,17 @@ function normalizeFieldOptions(raw, keys) {
     if (!raw || typeof raw !== 'object') return out;
     const push = (k, x) => {
         const s = x != null ? String(x).trim() : '';
-        if (s && !(out[k] || []).some(e => e === s)) (out[k] = out[k] || []).push(s);
+        if (s && !isJunkVariant(k, s) && !(out[k] || []).some(e => e === s)) (out[k] = out[k] || []).push(s);
+    };
+    // Отсекаем явный мусор и плейсхолдеры, которые модель может вставить.
+    const isJunkVariant = (k, s) => {
+        if (k !== 'executor' && k !== 'phone') return false;
+        if (s.length > 80) return true;
+        if (/\[.*\]/.test(s) && /фио|исполнител|xx/i.test(s)) return true;
+        if (/Ответственные исполнител|\(XXX\)|xxx/i.test(s)) return true;
+        if (k === 'phone' && !/\+?7\s*[\d\(\)\-\s]{5,}/.test(s)) return true;
+        if (k === 'executor' && /отдел|служб|комисси|управлени|подразделен/i.test(s)) return true;
+        return false;
     };
     // Плоский список (списков) без ключей — по порядку keys. Элементы: строки/числа
     // или вложенные списки, НО не объекты-наборы полей.
@@ -805,9 +864,6 @@ function renderMemoPreview(f) {
     lines.push('');
     if (f.sender_position || f.sender_short_name) {
         lines.push(`С уважением, ${f.sender_position || ''} ${f.sender_short_name || ''}`);
-    }
-    if (f.executor || f.phone) {
-        lines.push(`Исполнитель: ${f.executor || ''} ${f.phone || ''}`.trim());
     }
     return lines.join('\n');
 }

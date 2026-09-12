@@ -231,8 +231,9 @@ def generate_memo_docx(fields: dict) -> io.BytesIO:
             body_lines = [ln for ln in (fields.get("body") or "").split("\n") if ln.strip()]
             if body_lines:
                 _replace_paragraph_text(p, body_lines[0])
+                anchor = p
                 for line in body_lines[1:]:
-                    _insert_paragraph_after(p, line)
+                    anchor = _insert_paragraph_after(anchor, line)
             else:
                 _replace_paragraph_text(p, "")
             continue

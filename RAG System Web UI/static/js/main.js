@@ -1016,10 +1016,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
     loadServerHistory();
 
-    // Всегда открываем последний диалог (мастер служебной записки восстанавливается
-    // самим Мастером через localStorage, но не должен подменять чат).
+    // Восстанавливаем незавершённый мастер служебной записки (через localStorage),
+    // а если его нет — открываем последний диалог.
     setTimeout(() => {
-        loadLastConversation();
+        if (typeof MemoWizard !== 'undefined' && typeof MemoWizard.restoreSession === 'function') {
+            MemoWizard.restoreSession().then(restored => {
+                if (!restored) loadLastConversation();
+            });
+        } else {
+            loadLastConversation();
+        }
     }, 300);
 
     setInterval(checkSyncStatus, 500);

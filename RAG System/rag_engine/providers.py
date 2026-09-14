@@ -7,6 +7,17 @@
 """
 from typing import List, Optional
 
+import httpx
+
+# Таймауты HTTP-клиентов бэкендов. Пробы (list_models/capabilities) должны
+# быстро отваливаться на недоступном/нелокальном адресе — иначе смена
+# провайдера/моделей через админку зависает на десятки секунд (дефолтные
+# таймауты openai/ollama достигают 600с).
+_PROBE_TIMEOUT = httpx.Timeout(connect=3.0, read=8.0, write=8.0, pool=3.0)
+_PROBE_MAX_RETRIES = 1
+# Реальная генерация (ключевые слова) может быть долгой — щедрый таймаут.
+_GENERATE_TIMEOUT = 120.0
+
 
 class ProviderError(RuntimeError):
     pass
@@ -95,23 +106,22 @@ class OllamaProvider(BaseProvider):
             embed_batch_size=10,
         )
 
-    def generate_text(self, model: str, prompt: str) -> str:
+    def _client(self, timeout):
         import ollama
 
-        client = ollama.Client(host=self.url)
+        return ollama.Client(host=self.url, timeout=timeout)
+
+    def generate_text(self, model: str, prompt: str) -> str:
+        client = self._client(_GENERATE_TIMEOUT)
         response = client.generate(model=model, prompt=prompt)
         return response["response"]
 
     def list_models(self) -> List[str]:
-        import ollama
-
-        client = ollama.Client(host=self.url)
+        client = self._client(_PROBE_TIMEOUT)
         return [m["model"] for m in client.list()["models"]]
 
     def capabilities(self, model: str, cap: str) -> bool:
-        import ollama
-
-        client = ollama.Client(host=self.url)
+        client = self._client(_PROBE_TIMEOUT)
         try:
             details = client.show(model)
             return bool(details and cap in details.get("capabilities", []))
@@ -149,10 +159,18 @@ class LMStudioProvider(BaseProvider):
             embed_batch_size=10,
         )
 
-    def generate_text(self, model: str, prompt: str) -> str:
+    def _openai_client(self, timeout, max_retries=_PROBE_MAX_RETRIES):
         from openai import OpenAI
 
-        client = OpenAI(base_url=self.url, api_key=self.api_key or "lm-studio")
+        return OpenAI(
+            base_url=self.url,
+            api_key=self.api_key or "lm-studio",
+            timeout=timeout,
+            max_retries=max_retries,
+        )
+
+    def generate_text(self, model: str, prompt: str) -> str:
+        client = self._openai_client(_GENERATE_TIMEOUT)
         response = client.chat.completions.create(
             model=model,
             messages=[{"role": "user", "content": prompt}],
@@ -161,9 +179,7 @@ class LMStudioProvider(BaseProvider):
         return response.choices[0].message.content or ""
 
     def list_models(self) -> List[str]:
-        from openai import OpenAI
-
-        client = OpenAI(base_url=self.url, api_key=self.api_key or "lm-studio")
+        client = self._openai_client(_PROBE_TIMEOUT)
         return [m.id for m in client.models.list().data]
 
     def capabilities(self, model: str, cap: str) -> bool:

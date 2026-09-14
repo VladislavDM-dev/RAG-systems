@@ -1,7 +1,15 @@
 import json
 import os
+import sys
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
+
+
+def config_dir() -> Path:
+    """Каталог конфигурации: рядом с exe в frozen-сборке, иначе рядом с модулем."""
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent
 
 
 @dataclass
@@ -26,7 +34,8 @@ class Settings:
     llm_keywords: str = "llama3.2:3b"
 
     # Адрес API провайдера (Ollama: http://host:11434, LM Studio: http://host:1234/v1)
-    url: str = "http://172.30.99.77:11434"
+    # Дефолт — локальный Ollama (согласован с providers.DEFAULT_URLS).
+    url: str = "http://127.0.0.1:11434"
     # API-ключ (обязателен для некоторых провайдеров; Ollama/LM Studio local — можно любой)
     api_key: str = ""
 
@@ -34,7 +43,7 @@ class Settings:
     sync_folders: list = field(default_factory=list)
 
     def __post_init__(self) -> None:
-        _config_path = Path(__file__).parent / "settings.json"
+        _config_path = config_dir() / "settings.json"
         if not _config_path.exists():
             return
         try:
@@ -48,7 +57,7 @@ class Settings:
                 setattr(self, k, v)
 
     def save(self) -> None:
-        target = Path(__file__).parent / "settings.json"
+        target = config_dir() / "settings.json"
         temp = target.with_suffix(".tmp")
         try:
             with temp.open("w", encoding="utf-8") as f:

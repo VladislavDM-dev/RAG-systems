@@ -1,5 +1,6 @@
 import gc
 import os
+import sys
 import time
 import json
 import shutil
@@ -37,7 +38,11 @@ class RAGEngine:
     def __init__(self, config: Optional[Settings] = None):
         self.cfg = config or Settings()
         self.documents_paths = list(self.cfg.sync_folders or [])
-        self.cache_dir = ".cache"
+        if getattr(sys, "frozen", False):
+            # В frozen-сборке .cache кладём рядом с exe, а не в cwd.
+            self.cache_dir = str(Path(sys.executable).resolve().parent / ".cache")
+        else:
+            self.cache_dir = ".cache"
         os.makedirs(self.cache_dir, exist_ok=True)
         self.index = None
         self.node_parser = SentenceSplitter(
@@ -45,7 +50,7 @@ class RAGEngine:
             chunk_overlap=self.cfg.chunk_overlap,
             paragraph_separator="\n\n\n",
         )
-        self.file_hash_db = FileHashManager()
+        self.file_hash_db = FileHashManager(os.path.join(self.cache_dir, "file_hashes.db"))
         self.provider = create_provider(self.cfg.provider, self.cfg.url, self.cfg.api_key)
 
         # Статус
@@ -352,6 +357,12 @@ class RAGEngine:
         except Exception as e:
             print(f"Ошибка: {e}")
             self.status_backend = False
+            # Бэкенд недоступен (например, указан адрес на другой машине) —
+            # не оставляем списки моделей от прежнего провайдера/адреса,
+            # иначе админка показывает устаревшие модели.
+            self.backend_models = []
+            self.backend_models_thinking = []
+            self.backend_models_embed = []
 
 
     # ------------------------------------------------------------------

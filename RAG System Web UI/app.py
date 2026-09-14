@@ -519,7 +519,10 @@ def test_parser():
 
 
 # Список служебных записок для простого запроса (chron: до RAG не дотягивает).
-_MEMO_FOLDER = os.path.abspath(os.path.join(BASE_DIR, "..", "out"))
+_MEMO_FOLDER = os.environ.get(
+    "MEMO_CORPUS_DIR",
+    os.path.abspath(os.path.join(BASE_DIR, "..", "out")),
+)
 _MEMOS_CACHE = {"ts": 0.0, "memos": None}
 _MEMOS_CACHE_TTL = 10
 _MEMO_STOP = {

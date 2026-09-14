@@ -21,3 +21,10 @@ RAG System Web UI/users.json
 
 # Локальная конфигурация (пути, ключи)
 RAG System/rag_engine/settings.json
+
+# Сборки PyInstaller
+build/
+dist/
+
+# Готовые установщики Inno Setup
+installer/Output/

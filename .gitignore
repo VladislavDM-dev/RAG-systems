@@ -22,6 +22,12 @@ RAG System Web UI/users.json
 # Локальная конфигурация (пути, ключи)
 RAG System/rag_engine/settings.json
 
+# Секреты и данные деплоя (никогда не коммитить)
+credentials.json
+.env
+session_data.json
+deploy_config.json
+
 # Сборки PyInstaller
 build/
 dist/

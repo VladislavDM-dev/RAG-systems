@@ -17,12 +17,11 @@
 
 ## Ключевые факты
 
-- **Мастер записки (`/create <тема>`)** берёт варианты тела из готовых `.docx` в `out/` (НЕ генерирует через LLM). Исполнитель/телефон читаются из колонтитулов (footer). Путь к корпусу: Web UI `app.py:522` (`_MEMO_FOLDER = ../out`, абсолютный).
-- **Web UI RAM-кэш**: `/api/memos` открывает ВСЕ `.docx` из `out/` и держит полный текст в памяти 10 сек (TTL `_MEMOS_CACHE_TTL`, app.py:524). При 2000+ документах это сотни МБ — не усугубляйте (не добавляйте постоянных копий текста в память без необходимости).
+- **Web UI работает только через RAG API**: НЕ читает корпус `out/`, НЕ держит кэшей документов. Мастер записки (`/create <тема>`) генерирует варианты тела через RAG (системный промпт `SYSTEM_PROMPT_MEMO_VARIANTS` в `config.py`); сеть документов — команда `/memos` (тоже RAG-промптом). В Web UI нет ни `_MEMO_FOLDER`, ни `_MEMOS_CACHE`. Корпус `out/` остался только для ядра RAG и его тестов.
 - **Шаблон `docx_templates/mmo.dotx`** — бинарный, но в git. Поля шаблона определяются из самого файла (`memo_docx.discover_template_fields`). Правки Word меняют байты даже при «невидимых» изменениях — перед правками проверяйте соответствие плейсхолдеров (`{{ ... }}`), а git-diff больших бинарных изменений не доверяйте.
-- **Бампить `MEMO_JS_VERSION`** в Web UI `app.py:26` при каждой правке `static/js/memo.js` или `main.js`, иначе браузер отдаст закешированную версию (версия вставляется в `index.html` как `?v=...`).
+- **Бампить `MEMO_JS_VERSION`** в Web UI `config.py` при каждой правке `static/js/*.js`, иначе браузер отдаст закешированную версию (версия вставляется в шаблоны как `?v=...`).
 - **`requirements.txt` Web UI неполный**: `app.py` и `memo_docx.py` импортируют `docx` (python-docx), но в requirements его нет — установлен вручную в `.venv`. При развёртывании на чистом venv доустановите `python-docx`.
-- `out/` — сгенерированный корпус, в gitignore. Тесты и Web UI зависят от его наличия. Перегенерить: `& "RAG System\.venv\Scripts\python.exe" -X utf8 generate_memos.py` (нужен Word COM).
+- `out/` — сгенерированный корпус, в gitignore. От него зависят только тесты ядра (не Web UI). Перегенерить: `& "RAG System\.venv\Scripts\python.exe" -X utf8 generate_memos.py` (нужен Word COM).
 
 ## Windows / COM-ограничения
 
@@ -39,14 +38,14 @@
 
 - Тесты ядра: conftest **перезаписывает `settings.json` на дефолты на время прогона и восстанавливает** после — не удивляйтесь «пропавшей» конфигурации во время тестов.
 - `test_parse_all_docx_files` парсит ВСЕ `.docx` из `../out` через Word COM — медленный. Требует ≥49 файлов в `out/`.
-- Тесты Web UI тоже читают реальные `.docx` (`out/`, `docx_templates/mmo.dotx`).
-- JS мастера (memo.js/main.js) тестами не покрыт — проверяйте headless через puppeteer-core скрипты + системный Chrome.
+- Тесты Web UI не читают реальный корпус: `conftest.py` подменяет RAG-клиент заглушкой (`FakeRAG`) и ставит временную SQLite-базу; из реальных файлов используется только `docx_templates/mmo.dotx` (через `/api/memo/template`).
+- JS (memo.js/chat.js/admin.js и др.) pytest-покрытием не покрыт — проверяйте `node --check` и headless через puppeteer-core скрипты + системный Chrome.
 
 ## Сборка (PyInstaller)
 
 - Spec-файлы: `RAG System/build.spec` (ядро), `RAG System Web UI/build.spec` (Web UI). Скрипт для обоих — `build_all.ps1` в корне (ставит PyInstaller в venv проекта при первом запуске). Результат — onedir-EXE в `dist/<имя>/`.
 - Ядро: `datas` для `tiktoken_ext` (иначе `ValueError: Unknown encoding cl100k_base`) и `hook_runtime.py` (UTF-8 для stdout/stderr, т.к. exe не наследует `-X utf8`).
-- В frozen-режиме конфиг пишется рядом с exe: `settings.json` и `.cache/` (`config.config_dir()`, `RAGEngine.cache_dir`). Дефолты конфликта — каталог корпуса Web UI: env `MEMO_CORPUS_DIR` (по умолч. `<exe_dir>/../out`), шаблон — env `MEMO_TEMPLATE_DIR` (`docx_templates/mmо.dotx`).
+- В frozen-режиме Web UI: `data/` (SQLite `app.db`, `SECRET_KEY_FILE`) пишется рядом с exe (`hook_runtime.py`); шаблон — env `MEMO_TEMPLATE_DIR` (по умолч. `<exe_dir>/_internal/docx_templates`). Корпус в Web UI не бандлится.
 - Запуск тестов после правок путей ядра: конфиг не ломается (тесты конфигурируют свой settings.json), но `test_parse_*` с `#20-`-файлом из `out/` падают, если корпус перегенерирован.
 
 ## Git

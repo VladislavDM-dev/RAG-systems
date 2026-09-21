@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Вход - База знаний</title>
+    <title>Регистрация - База знаний</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/bootstrap.min.css') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/bootstrap-icons.css') }}">
     <style>
@@ -32,32 +32,41 @@
 </head>
 <body>
     <div class="login-card">
-        <div class="login-icon"><i class="bi bi-journal-bookmark-fill"></i></div>
-        <h4 class="text-center mb-4">База знаний</h4>
+        <div class="login-icon"><i class="bi bi-person-plus-fill"></i></div>
+        <h4 class="text-center mb-4">Регистрация</h4>
 
-        {% if error %}
-        <div class="alert alert-danger py-2">{{ error }}</div>
+        {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+        {% for category, message in messages %}
+        <div class="alert alert-{{ category }} py-2">{{ message }}</div>
+        {% endfor %}
         {% endif %}
+        {% endwith %}
 
-        <form method="POST" action="{{ url_for('login_submit') }}">
-            <input type="hidden" name="next" value="{{ next_url }}">
+        <form method="POST" action="{{ url_for('auth.register_submit') }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <div class="mb-3">
                 <label class="form-label">Логин</label>
                 <input type="text" name="username" class="form-control form-control-lg"
-                       placeholder="Логин" autofocus required>
+                       placeholder="Логин" value="{{ username or '' }}" autofocus required>
             </div>
-            <div class="mb-4">
+            <div class="mb-3">
                 <label class="form-label">Пароль</label>
                 <input type="password" name="password" class="form-control form-control-lg"
-                       placeholder="Пароль" required>
+                       placeholder="Не менее 6 символов" required>
+            </div>
+            <div class="mb-4">
+                <label class="form-label">Повторите пароль</label>
+                <input type="password" name="password2" class="form-control form-control-lg"
+                       placeholder="Повторите пароль" required>
             </div>
             <button type="submit" class="btn btn-primary btn-lg w-100">
-                <i class="bi bi-box-arrow-in-right me-2"></i>Войти
+                <i class="bi bi-person-check me-2"></i>Зарегистрироваться
             </button>
         </form>
 
         <div class="text-center mt-3">
-            <a href="{{ url_for('register_page') }}" class="text-muted">Нет аккаунта? Зарегистрироваться</a>
+            <a href="{{ url_for('auth.login_page') }}" class="text-muted">Уже есть аккаунт? Войти</a>
         </div>
     </div>
 </body>

@@ -3,32 +3,64 @@ body {
     height: 100vh;
     display: flex;
     flex-direction: column;
-    overflow-x: hidden; /* Изменено для предотвращения горизонтальной прокрутки */
+    overflow-x: hidden;
 }
 
-/* Основная структура лэйаута */
 .navbar { flex-shrink: 0; }
 
+/* Мини-оверлей синхронизации (сверху) */
+#sync-overlay.sync-mini {
+    position: fixed;
+    top: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 2000;
+    display: none;
+    width: auto;
+    max-width: 90vw;
+}
+
+#sync-overlay.sync-mini.active { display: flex; }
+
+.sync-card-mini {
+    background: #ffffff;
+    border: 1px solid #dee2e6;
+    border-radius: 0 0 12px 12px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.12);
+    padding: 8px 16px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.9rem;
+}
+
+.sync-spin {
+    display: inline-block;
+    animation: sync-rotate 1s linear infinite;
+}
+
+@keyframes sync-rotate {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+
+/* Основная структура */
 .chat-container {
     display: flex;
     flex: 1;
     overflow: hidden;
 }
 
-/* Левая часть с чатом */
 .main-chat-area {
     flex: 1;
     display: flex;
     flex-direction: column;
     background-color: #ffffff;
-    border-radius: 0;
-    margin: 0;
     padding: 20px;
     min-width: 300px;
     max-height: 100vh;
 }
 
-/* Правая панель с историей чатов */
 .chat-history-panel {
     width: 320px;
     background-color: #f8f9fa;
@@ -36,7 +68,6 @@ body {
     display: flex;
     flex-direction: column;
     overflow: hidden;
-    transition: all 0.3s ease;
 }
 
 .history-header {
@@ -90,27 +121,25 @@ body {
     margin-bottom: 10px;
     cursor: pointer;
     transition: all 0.2s ease;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
 }
-.conversation-item .conv-question {
-    font-weight: 500;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    margin-bottom: 4px;
-}
-.conversation-item .conv-meta {
-    font-size: 0.85em;
-    color: #6c757d;
-}
+
 .conversation-item:hover {
     transform: translateX(2px);
-    box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
 }
 
 .conversation-item.active {
     background-color: #e7f1ff;
     border-left: 3px solid #0d6efd;
+}
+
+.conv-question {
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin-bottom: 4px;
 }
 
 .conv-title {
@@ -137,17 +166,8 @@ body {
 }
 
 .conv-meta {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    font-size: 11px;
-    color: #adb5bd;
-}
-
-.conv-date {
-    background-color: #f1f3f5;
-    padding: 2px 6px;
-    border-radius: 4px;
+    font-size: 0.85em;
+    color: #6c757d;
 }
 
 .empty-history {
@@ -162,42 +182,6 @@ body {
     opacity: 0.3;
 }
 
-/* Новые стили для центрального выбора режима */
-#mode-selector-container {
-    position: fixed; /* Фиксированное положение относительно viewport */
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%); /* Центрирование */
-    z-index: 1000; /* Высокий z-index, чтобы быть поверх всего */
-    background-color: #ffffff;
-    border-radius: 30px; /* Форма эллипса */
-    box-shadow: 0 15px 40px rgba(0,0,0,0.2);
-    padding: 20px;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    cursor: pointer;
-    transition: all 0.3s ease;
-}
-
-#mode-selector-container:hover {
-    box-shadow: 0 20px 50px rgba(0,0,0,0.25);
-}
-
-#mode-selector-container .mode-icon {
-    font-size: 1.5rem;
-    color: #0d6efd;
-    cursor: pointer;
-}
-
-#current-mode-display {
-    font-weight: 600;
-    color: #333;
-    flex-grow: 1;
-    text-align: center;
-}
-
-/* Стили для старого чата и ввода */
 #chat-container {
     flex: 1;
     overflow-y: auto;
@@ -213,7 +197,7 @@ body {
     max-width: 75%;
     padding: 12px 16px;
     border-radius: 15px;
-    box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
     word-wrap: break-word;
     background-color: #ffffff;
     color: #333;
@@ -237,7 +221,9 @@ body {
     border-top: 1px solid #eee;
     padding-top: 8px;
 }
+
 .sources-list strong { color: #495057; }
+
 .file-badge {
     display: inline-block;
     background: #e9ecef;
@@ -254,7 +240,6 @@ body {
     z-index: 10;
 }
 
-/* Меню подсказки команд (dropup над полем ввода) */
 .command-menu-wrap {
     position: relative;
 }
@@ -269,7 +254,7 @@ body {
     background: #ffffff;
     border: 1px solid #dee2e6;
     border-radius: 10px;
-    box-shadow: 0 8px 24px rgba(0,0,0,0.15);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
     overflow: hidden;
     z-index: 1050;
 }
@@ -304,33 +289,6 @@ body {
     color: #6c757d;
 }
 
-/* Оверлей синхронизации */
-#sync-overlay {
-    position: fixed;
-    top: 0; left: 0; width: 100%; height: 100%;
-    background: rgba(255, 255, 255, 0.9);
-    backdrop-filter: blur(5px);
-    z-index: 2000;
-    display: none;
-    flex-direction: column;
-    justify-content: center;
-    align-items: center;
-    text-align: center;
-}
-
-#sync-overlay.active { display: flex; }
-
-.sync-card {
-    background: white;
-    padding: 40px;
-    border-radius: 20px;
-    box-shadow: 0 15px 35px rgba(0,0,0,0.15);
-    max-width: 550px;
-    width: 90%;
-    border: 1px solid rgba(0,0,0,0.05);
-}
-
-/* Анимация многоточия при печати */
 .typing-indicator::after {
     content: ' .';
     animation: dots 1.5s steps(5, end) infinite;
@@ -344,7 +302,7 @@ body {
     80%, 100% { content: ' ....'; }
 }
 
-/* Markdown стили */
+/* Markdown stylи */
 .markdown-content p {
     margin: 0 0 0.5em 0;
     line-height: 1.4;
@@ -360,24 +318,21 @@ body {
     padding: 4px 8px;
     text-align: left;
 }
-.d-think
-{
-    font-size: 11px;
-    background-color: #fffcf3;
-}
-.text-xs
-{
+
+.text-xs {
     font-size: 10px;
 }
 
-/* Шаги мастера служебной записки: шире пузырёк, адаптивная ширина */
+/* Мемо-мастер */
 .message-row.memo-wide {
     justify-content: stretch;
 }
+
 .message-row.memo-wide .message-bubble {
     max-width: 100%;
     width: 100%;
 }
+
 .message-row.memo-wide .memo-review-text,
 .message-row.memo-wide .memo-edit-text,
 .message-row.memo-wide .memo-edit-body,
@@ -388,10 +343,12 @@ body {
     min-height: 120px;
     max-height: 60vh;
 }
+
 .message-row.memo-wide .memo-field input.memo-input {
     width: 100%;
     min-width: 0;
 }
+
 .message-row.memo-wide .memo-preview-text {
     white-space: pre-wrap;
     word-wrap: break-word;
@@ -405,28 +362,30 @@ body {
     overflow-y: auto;
 }
 
-/* Выбранный вариант поля — заметное выделение цветом шрифта и фона */
 .memo-option.btn-primary {
     background-color: #0d6efd;
     border-color: #0d6efd;
     color: #ffffff !important;
     font-weight: 600;
 }
+
 .memo-option.btn-primary:hover {
     background-color: #0b5ed7;
     border-color: #0a58ca;
     color: #ffffff !important;
 }
 
-/* Список служебных записок по простому запросу */
+/* Список служебных записок */
 .memo-list ol {
     margin: 8px 0 0 0;
     padding-left: 20px;
 }
+
 .memo-list ol > li {
     margin-bottom: 12px;
     font-weight: 600;
 }
+
 .memo-meta {
     display: flex;
     align-items: center;
@@ -435,17 +394,20 @@ body {
     margin-top: 4px;
     font-weight: 400;
 }
+
 .memo-path {
     font-size: 0.82em;
     color: #6c757d;
     word-break: break-all;
 }
+
 .memo-copy {
     flex-shrink: 0;
     font-size: 0.78em;
     padding: 1px 8px;
     line-height: 1.5;
 }
+
 .memo-list-body {
     white-space: pre-wrap;
     word-wrap: break-word;
@@ -459,4 +421,21 @@ body {
     max-height: 24vh;
     overflow-y: auto;
     font-size: 0.92em;
+}
+
+/* Админ-панель: папки */
+.folder-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: #f8f9fa;
+    border: 1px solid #e9ecef;
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-size: 0.9rem;
+}
+
+.folder-item .folder-path {
+    word-break: break-all;
+    margin-right: 8px;
 }

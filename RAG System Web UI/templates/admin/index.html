@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Админ-панель - База знаний</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/bootstrap.min.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/bootstrap-icons.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v={{ config['MEMO_JS_VERSION'] }}">
+</head>
+<body>
+
+    <nav class="navbar navbar-expand bg-white border-bottom px-3">
+        <span class="navbar-brand mb-0 h5"><i class="bi bi-gear-fill me-2"></i>Админ-панель</span>
+        <div class="ms-auto d-flex align-items-center">
+            <a href="{{ url_for('chat.index') }}" class="btn btn-outline-primary btn-sm me-2">
+                <i class="bi bi-arrow-left me-1"></i>Чат
+            </a>
+            <form method="POST" action="{{ url_for('auth.logout') }}" class="m-0">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="btn btn-outline-secondary btn-sm">
+                    <i class="bi bi-box-arrow-right me-1"></i>Выйти
+                </button>
+            </form>
+        </div>
+    </nav>
+
+    <div class="container-fluid py-4">
+        <div class="row">
+            <div class="col-12 mb-4">
+                <div id="backend-status" class="alert alert-info mb-0">
+                    <i class="bi bi-arrow-repeat sync-spin me-2"></i>Загрузка статуса системы...
+                </div>
+            </div>
+        </div>
+
+        <div class="row">
+            <!-- Инфо и синхронизация -->
+            <div class="col-lg-6 mb-4">
+                <div class="card shadow-sm">
+                    <div class="card-header bg-white fw-bold"><i class="bi bi-info-circle me-2"></i>Информация о системе</div>
+                    <div class="card-body">
+                        <table class="table table-sm table-borderless mb-0">
+                            <tbody>
+                                <tr><td class="text-muted" style="width: 40%">Версия движка</td><td id="adm-version">{{ version }}</td></tr>
+                                <tr><td class="text-muted">Документов в индексе</td><td id="adm-doc-count">{{ document_count }}</td></tr>
+                                <tr><td class="text-muted">Индекс обновлён</td><td id="adm-index-updated">{{ index_updated }}</td></tr>
+                                <tr><td class="text-muted">Провайдер</td><td id="adm-provider-name">{{ provider }}</td></tr>
+                                <tr><td class="text-muted">Статус бэкенда</td><td id="adm-backend-status">—</td></tr>
+                            </tbody>
+                        </table>
+                        <div class="d-flex gap-2 mt-3">
+                            <button id="btn-sync" class="btn btn-primary btn-sm">
+                                <i class="bi bi-arrow-repeat me-1"></i>Запустить синхронизацию
+                            </button>
+                            <button id="btn-sync-reset" class="btn btn-outline-danger btn-sm">
+                                <i class="bi bi-trash me-1"></i>Сброс и пересинхронизация
+                            </button>
+                        </div>
+                        <div id="sync-progress-container" class="mt-3 d-none">
+                            <div class="d-flex justify-content-between">
+                                <small class="text-muted" id="adm-sync-status">Синхронизация...</small>
+                                <small id="adm-sync-percent" class="text-muted">0%</small>
+                            </div>
+                            <div class="progress mt-1" style="height: 6px;">
+                                <div id="adm-sync-progress-bar" class="progress-bar" style="width: 0%"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Настройки LLM -->
+                <div class="card shadow-sm mt-4">
+                    <div class="card-header bg-white fw-bold"><i class="bi bi-cpu me-2"></i>Настройки LLM</div>
+                    <div class="card-body">
+                        <form id="config-form">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <div class="row g-2">
+                                <div class="col-md-6">
+                                    <label class="form-label small">Провайдер</label>
+                                    <select id="cfg-provider" class="form-select form-select-sm">
+                                        <option value="ollama" {% if provider == 'ollama' %}selected{% endif %}>Ollama</option>
+                                        <option value="lmstudio" {% if provider == 'lmstudio' %}selected{% endif %}>LM Studio</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label small">URL API</label>
+                                    <input type="text" id="cfg-url" class="form-control form-control-sm" value="{{ llm_url }}">
+                                </div>
+                                <div class="col-md-12">
+                                    <label class="form-label small">API Key</label>
+                                    <input type="password" id="cfg-api-key" class="form-control form-control-sm" value="{{ api_key }}">
+                                </div>
+                                <div class="col-md-4">
+                                    <label class="form-label small">Модель LLM</label>
+                                    <select id="cfg-llm" class="form-select form-select-sm">
+                                        {% for m in llm_all %}<option value="{{ m }}" {% if m == llm %}selected{% endif %}>{{ m }}</option>{% endfor %}
+                                    </select>
+                                </div>
+                                <div class="col-md-4">
+                                    <label class="form-label small">Embedding модель</label>
+                                    <select id="cfg-llm-embed" class="form-select form-select-sm">
+                                        {% for m in llm_embedding %}<option value="{{ m }}" {% if m == llm_embed %}selected{% endif %}>{{ m }}</option>{% endfor %}
+                                    </select>
+                                </div>
+                                <div class="col-md-4">
+                                    <label class="form-label small">Keywords модель</label>
+                                    <select id="cfg-llm-keywords" class="form-select form-select-sm">
+                                        {% for m in llm_all %}<option value="{{ m }}" {% if m == llm_keywords %}selected{% endif %}>{{ m }}</option>{% endfor %}
+                                    </select>
+                                </div>
+                                <div class="col-md-3">
+                                    <label class="form-label small">Контекст (токены)</label>
+                                    <input type="number" id="cfg-context-window" class="form-control form-control-sm" value="{{ context_window }}">
+                                </div>
+                                <div class="col-md-3">
+                                    <label class="form-label small">Размер чанка</label>
+                                    <input type="number" id="cfg-chunk-size" class="form-control form-control-sm" value="{{ chunk_size }}">
+                                </div>
+                                <div class="col-md-3">
+                                    <label class="form-label small">Overlap</label>
+                                    <input type="number" id="cfg-chunk-overlap" class="form-control form-control-sm" value="{{ chunk_overlap }}">
+                                </div>
+                                <div class="col-md-3">
+                                    <label class="form-label small">top_k</label>
+                                    <input type="number" id="cfg-similarity-top-k" class="form-control form-control-sm" value="{{ similarity_top_k }}">
+                                </div>
+                            </div>
+                            <div class="d-flex gap-2 mt-3">
+                                <button type="submit" id="btn-config-save" class="btn btn-primary btn-sm">
+                                    <i class="bi bi-check-lg me-1"></i>Сохранить
+                                </button>
+                                <button type="button" id="btn-config-reset" class="btn btn-outline-danger btn-sm">
+                                    <i class="bi bi-arrow-counterclockwise me-1"></i>Сбросить конфигурацию
+                                </button>
+                            </div>
+                            <div id="config-status" class="small text-muted mt-2"></div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-lg-6">
+                <!-- Папки синхронизации -->
+                <div class="card shadow-sm">
+                    <div class="card-header bg-white fw-bold"><i class="bi bi-folder me-2"></i>Папки для сканирования</div>
+                    <div class="card-body">
+                        <div id="folders-list" class="d-flex flex-column gap-1 mb-2"></div>
+                        <div class="input-group input-group-sm">
+                            <input type="text" id="folder-input" class="form-control" placeholder="C:\Docs">
+                            <button id="folder-add-btn" class="btn btn-outline-primary btn-sm">
+                                <i class="bi bi-plus-lg"></i> Добавить
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Пользователи -->
+                <div class="card shadow-sm mt-4">
+                    <div class="card-header bg-white fw-bold"><i class="bi bi-people me-2"></i>Пользователи</div>
+                    <div class="card-body">
+                        <table class="table table-sm">
+                            <thead>
+                                <tr><th>Логин</th><th>Роль</th><th class="text-end">Действия</th></tr>
+                            </thead>
+                            <tbody id="users-tbody"></tbody>
+                        </table>
+                        <div class="input-group input-group-sm">
+                            <input type="text" id="new-user-name" class="form-control" placeholder="Логин">
+                            <input type="password" id="new-user-pass" class="form-control" placeholder="Пароль">
+                            <button id="new-user-btn" class="btn btn-outline-primary btn-sm">
+                                <i class="bi bi-person-plus"></i>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Шаблон мемо -->
+                <div class="card shadow-sm mt-4">
+                    <div class="card-header bg-white fw-bold"><i class="bi bi-file-earmark-word me-2"></i>Шаблон служебной записки</div>
+                    <div class="card-body">
+                        <div id="memo-template-info" class="small text-muted mb-2">Загрузка...</div>
+                        <div class="d-flex gap-2">
+                            <button id="memo-template-reload" class="btn btn-outline-secondary btn-sm">
+                                <i class="bi bi-arrow-clockwise me-1"></i>Перечитать шаблон
+                            </button>
+                            <label class="btn btn-outline-primary btn-sm mb-0">
+                                <i class="bi bi-upload me-1"></i>Загрузить новый .dotx
+                                <input type="file" id="memo-template-file" accept=".dotx" class="d-none">
+                            </label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/bootstrap.bundle.min.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/utils.js') }}?v={{ config['MEMO_JS_VERSION'] }}"></script>
+    <script src="{{ url_for('static', filename='js/admin.js') }}?v={{ config['MEMO_JS_VERSION'] }}"></script>
+</body>
+</html>

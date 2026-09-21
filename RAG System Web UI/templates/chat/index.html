@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>База знаний</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/bootstrap.min.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/bootstrap-icons.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v={{ config['MEMO_JS_VERSION'] }}">
+</head>
+<body>
+
+    <!-- Оверлей синхронизации (не блокирует UI) -->
+    <div id="sync-overlay" class="sync-mini">
+        <div class="sync-card-mini">
+            <i class="bi bi-arrow-repeat sync-spin me-2"></i>
+            <span id="sync-status-text">Синхронизация...</span>
+            <div id="sync-progress-mini" class="progress mt-2 d-none" style="height: 4px;">
+                <div id="sync-progress-bar" class="progress-bar" style="width: 0%"></div>
+            </div>
+            <button id="sync-dismiss" class="btn btn-sm btn-link text-muted ms-2" title="Свернуть">
+                <i class="bi bi-x-lg"></i>
+            </button>
+        </div>
+    </div>
+
+    <!-- Топ-бар -->
+    <nav class="navbar navbar-expand bg-white border-bottom px-3">
+        <span class="navbar-brand mb-0 h5"><i class="bi bi-journal-bookmark-fill me-2"></i>База знаний</span>
+        <div class="ms-auto d-flex align-items-center">
+            <span class="me-3 text-muted"><i class="bi bi-person-circle me-1"></i>{{ user.username }}</span>
+            {% if user.is_admin %}
+            <a href="{{ url_for('admin.admin_page') }}" class="btn btn-outline-primary btn-sm me-2" title="Админ-панель">
+                <i class="bi bi-gear"></i> Админ
+            </a>
+            {% endif %}
+            <form method="POST" action="{{ url_for('auth.logout') }}" class="m-0">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="btn btn-outline-secondary btn-sm">
+                    <i class="bi bi-box-arrow-right me-1"></i>Выйти
+                </button>
+            </form>
+        </div>
+    </nav>
+
+    <!-- Основной контейнер чата -->
+    <div class="chat-container">
+        <div class="main-chat-area" id="mainChatArea">
+            <div id="chat-container">
+                <div class="message-row bot">
+                    <div class="message-bubble">
+                        <p class="mb-0">Привет! Я готов отвечать на вопросы по вашим документам.</p>
+                        <div class="sources-list">
+                            <small>Статус: <span id="system-status" class="text-warning">Загрузка системы...</span></small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="input-area">
+                <div class="container-fluid p-0">
+                    <div class="row g-2 align-items-center">
+                        <div class="col">
+                            <div class="input-group">
+                                <span class="input-group-text bg-white"><i class="bi bi-robot"></i></span>
+                                <input type="text" id="question-input" class="form-control"
+                                       placeholder="Введите вопрос. Служебная записка: /create тема..." disabled>
+                            </div>
+                            <div id="command-menu-wrap" class="command-menu-wrap d-none">
+                                <div id="command-menu" class="command-menu"></div>
+                            </div>
+                        </div>
+                        <div class="col-auto">
+                            <button id="send-btn" class="btn btn-primary" disabled>
+                                <i class="bi bi-send-fill"></i> Отправить
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="chat-history-panel" id="chatHistoryPanel">
+            <div class="history-header">
+                <h5 class="mb-0">История</h5>
+                <div class="d-flex gap-1">
+                    <button id="newChatBtn" class="btn btn-sm btn-outline-primary" title="Начать новый диалог">
+                        <i class="bi bi-plus-circle"></i>
+                    </button>
+                    <button id="clearHistoryBtn" class="btn btn-sm btn-outline-danger" title="Очистить историю">
+                        <i class="bi bi-trash"></i>
+                    </button>
+                </div>
+            </div>
+
+            <div class="history-tabs">
+                <button class="tab-button active" data-tab="conversations">Диалоги</button>
+                <button class="tab-button" data-tab="favorites">Избранное</button>
+            </div>
+
+            <div class="history-content" id="historyContent">
+                <div id="conversationsTab"></div>
+                <div id="favoritesTab" style="display:none;"></div>
+                <div id="history-loading" class="empty-history d-none">
+                    <div class="spinner-border text-primary" role="status"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Модальное окно просмотра файла -->
+    <div class="modal fade" id="fileModal" tabindex="-1" aria-labelledby="fileModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Содержимое документа</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Закрыть"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label">Путь к файлу:</label>
+                        <div class="input-group">
+                            <input type="text" class="form-control" id="filePath" readonly>
+                            <button class="btn btn-outline-secondary" type="button" id="copyButton">
+                                <i class="bi bi-clipboard"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <div id="spinner" class="text-center d-none">
+                        <div class="spinner-border text-primary" role="status"></div>
+                        <p class="mt-2">Обработка файла...</p>
+                    </div>
+                    <div id="error-message" class="alert alert-danger d-none"></div>
+                    <div id="result-content" class="markdown-content"></div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Закрыть</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/bootstrap.bundle.min.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/marked.min.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/dompurify.min.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/utils.js') }}?v={{ config['MEMO_JS_VERSION'] }}"></script>
+    <script src="{{ url_for('static', filename='js/history.js') }}?v={{ config['MEMO_JS_VERSION'] }}"></script>
+    <script src="{{ url_for('static', filename='js/chat.js') }}?v={{ config['MEMO_JS_VERSION'] }}"></script>
+    <script src="{{ url_for('static', filename='js/sync.js') }}?v={{ config['MEMO_JS_VERSION'] }}"></script>
+    <script src="{{ url_for('static', filename='js/memo.js') }}?v={{ config['MEMO_JS_VERSION'] }}"></script>
+    <script src="{{ url_for('static', filename='js/app.js') }}?v={{ config['MEMO_JS_VERSION'] }}"></script>
+
+</body>
+</html>

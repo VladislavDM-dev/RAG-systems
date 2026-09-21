@@ -2,14 +2,12 @@
 """PyInstaller spec: RAG System Web UI (Flask-интерфейс, порт 80).
 
 onedir-EXE 'RAG System Web UI'. Бандлятся шаблоны Flask, статика и шаблон
-служебной записки mmo.dotx (уходят в <exe_dir>/_internal). users.json и data/
-создаются при первом запуске рядом с exe (см. hook_runtime.py).
+служебной записки mmo.dotx (уходят в <exe_dir>/_internal). data/app.db и
+data/secret_key создаются при первом запуске рядом с exe (см. hook_runtime.py).
+Корпус служебок Web UI не читает: всё работает через RAG API.
 
 Запуск (из каталога RAG System Web UI):
     venv python -m PyInstaller --noconfirm --clean build.spec
-
-Корпус служебок не бандлится: укажите каталог env MEMO_CORPUS_DIR либо
-разложите out/ согласно дефолту (см. hook_runtime.py).
 """
 import os
 

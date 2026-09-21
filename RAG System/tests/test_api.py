@@ -245,6 +245,57 @@ def test_agent_stream_missing_prompt(client):
     assert "prompt" in r.get_json()["error"]
 
 
+def test_memos_missing_prompt(client):
+    r = client.post("/rag/memos", json={})
+    assert r.status_code == 400
+    assert "prompt" in r.get_json()["error"]
+
+
+def test_memos_without_index(client):
+    r = client.post("/rag/memos", json={"prompt": "канцтовары"})
+    assert r.status_code == 503
+    assert "error" in r.get_json()
+
+
+def test_memos_emits_documents(client, monkeypatch):
+    """/rag/memos отдаёт документы с полным текстом."""
+    import app as app_module
+
+    engine = app_module.engine
+    calls = {}
+
+    def fake_memos(prompt, temperature=None, page_size=30, max_pages=15):
+        calls["prompt"] = prompt
+        calls["temperature"] = temperature
+        return {
+            "ok": True,
+            "total": 1,
+            "pages": 2,
+            "documents": [{
+                "file_name": "a.docx",
+                "file_path": "C:\\out\\a.docx",
+                "text": "Служебная записка №1",
+            }],
+        }
+
+    monkeypatch.setattr(engine, "memos", fake_memos)
+    engine.is_initialized = True
+    engine.index = object()
+
+    r = client.post(
+        "/rag/memos",
+        json={"prompt": "канцтовары", "temperature": 0.1},
+    )
+    assert r.status_code == 200
+    data = r.get_json()
+    assert data["ok"] is True
+    assert data["total"] == 1
+    assert data["documents"][0]["file_path"] == "C:\\out\\a.docx"
+    assert data["documents"][0]["text"] == "Служебная записка №1"
+    assert calls["prompt"] == "канцтовары"
+    assert calls["temperature"] == 0.1
+
+
 def test_agent_stream_without_index(client):
     """Если индекс не готов — корректный 503."""
     r = client.post("/rag/agent/stream", json={"prompt": "гарантия"})
@@ -261,11 +312,13 @@ def test_agent_stream_emits_events(client, monkeypatch):
     # Подменяем генератор, чтобы не ходить в реальную сеть/LLM.
     calls = {}
 
-    def fake_agent_stream(prompt, system_prompt=None, top_k=None, temperature=None):
+    def fake_agent_stream(prompt, system_prompt=None, top_k=None, temperature=None,
+                          exclude_node_ids=None):
         calls["prompt"] = prompt
         calls["system_prompt"] = system_prompt
         calls["top_k"] = top_k
         calls["temperature"] = temperature
+        calls["exclude_node_ids"] = exclude_node_ids
         yield {
             "type": "sources",
             "data": [{"file_name": "a.doc", "file_path": "C:\\a.doc", "score": 0.9}],
@@ -290,6 +343,7 @@ def test_agent_stream_emits_events(client, monkeypatch):
             "system_prompt": "Будь краток.",
             "top_k": 5,
             "temperature": 0.3,
+            "exclude_node_ids": ["n1", "n2"],
         },
         buffered=True,
     )
@@ -312,3 +366,4 @@ def test_agent_stream_emits_events(client, monkeypatch):
     assert calls["system_prompt"] == "Будь краток."
     assert calls["top_k"] == 5
     assert calls["temperature"] == 0.3
+    assert calls["exclude_node_ids"] == ["n1", "n2"]

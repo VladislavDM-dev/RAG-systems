@@ -34,16 +34,19 @@ class FileHashManager:
                 self.conn.close()
                 self.conn = None
 
-    def __del__(self):
-        """Закрытие соединения при удалении объекта"""
+    def close(self):
+        """Закрыть соединение с БД (освобождает файл для удаления)."""
         if self.conn:
             try:
                 self.conn.close()
-                print(f"[FileHashManager] Соединение закрыто для {self.db_path}")
             except Exception as e:
                 print(f"[FileHashManager] Ошибка при закрытии: {e}")
             finally:
                 self.conn = None
+
+    def __del__(self):
+        """Закрытие соединения при удалении объекта"""
+        self.close()
 
     def save(self, path: str, hash: str):
         """Сохранить или обновить хэш по path"""

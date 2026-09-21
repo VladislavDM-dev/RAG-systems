@@ -1,5 +1,6 @@
 import gc
 import os
+import re
 import sys
 import time
 import json
@@ -21,6 +22,7 @@ from llama_index.core import (
 )
 from llama_index.core.node_parser import SentenceSplitter
 from llama_index.core.schema import NodeWithScore
+from llama_index.core.postprocessor.types import BaseNodePostprocessor
 from llama_index.vector_stores.faiss import FaissVectorStore
 from datetime import datetime
 
@@ -30,6 +32,38 @@ from .docx_parser import DocxParser
 from .pdf_parser import PdfParser
 from .file_hash_manager import FileHashManager
 from .providers import create_provider
+
+
+_MEMO_BATCH_SYSTEM_PROMPT = (
+    "Ты — RAG-ассистент по служебным запискам. По теме «{topic}» определи "
+    "служебные записки, релевантные теме, среди приведённых фрагментов "
+    "документов (это батч №{page_no}). Каждый фрагмент помечен строкой "
+    "[Файл: <полный путь>]. Ранее уже были найдены файлы: {previously}. "
+    "Выведи ТОЛЬКО полные пути (из меток [Файл: ...]) записок, релевантных "
+    "теме, которых ещё не было в списке ранее найденных. Явно не выдумывай "
+    "пути — бери их строго из меток фрагментов. Формат ответа, по одному пути "
+    "на строку:\nПУТЬ: <полный путь>\nЕсли в этом батче нет новых релевантных "
+    "записок — ответь ровно: НОВЫХ ЗАПИСОК НЕТ"
+)
+
+
+class _ExcludeNodeIdsPostprocessor(BaseNodePostprocessor):
+    """Postprocessor: выкидывает из ретрива узлы, уже отданные ранее.
+
+    Нужен для постраничного (batch-by-batch) обхода индекса: потребитель
+    передаёт node_id уже полученных кусков, а ядро возвращает следующие.
+    """
+
+    def __init__(self, exclude_ids: List[str]):
+        super().__init__()
+        self._exclude_ids = set(exclude_ids)
+
+    @classmethod
+    def class_name(cls) -> str:
+        return "ExcludeNodeIdsPostprocessor"
+
+    def _postprocess_nodes(self, nodes, query_bundle=None):
+        return [n for n in nodes if n.node.node_id not in self._exclude_ids]
 
 
 class RAGEngine:
@@ -195,8 +229,11 @@ class RAGEngine:
         self.sync_file = []
 
         if is_remove:
+            if self.file_hash_db:
+                self.file_hash_db.close()
             shutil.rmtree(self.cache_dir, ignore_errors=True)
             os.makedirs(self.cache_dir, exist_ok=True)
+            self.file_hash_db = FileHashManager(os.path.join(self.cache_dir, "file_hashes.db"))
 
         try:
             # Загрузка существующего индекса или создание нового
@@ -381,11 +418,16 @@ class RAGEngine:
         system_prompt: Optional[str] = None,
         top_k: Optional[int] = None,
         temperature: Optional[float] = None,
+        exclude_node_ids: Optional[List[str]] = None,
     ):
         """Генератор SSE-событий для внешних агентов.
 
         Поиск по индексу (RAG) + ответ LLM с учётом системного промпта агента.
         События: token / sources / done / error.
+
+        exclude_node_ids: node_id фрагментов, уже отданных потребителю.
+        Ключевые фрагменты этих id исключаются из ретрива — так можно
+        «листать» индекс пачками по top_k, не повторяя уже полученное.
         """
         if self.is_syncing:
             yield {"type": "error", "data": "Идет синхронизация"}
@@ -400,6 +442,7 @@ class RAGEngine:
         system_prompt = (system_prompt or self.DEFAULT_AGENT_SYSTEM_PROMPT).strip()
         top_k = int(top_k or self.cfg.similarity_top_k)
         temperature = temperature if temperature is not None else 0.98
+        exclude_node_ids = [str(i) for i in (exclude_node_ids or [])]
 
         try:
             qa_prompt_tmpl = PromptTemplate(
@@ -419,7 +462,7 @@ class RAGEngine:
                 self.cfg.context_window,
                 temperature=temperature,
             )
-            query_engine = self.index.as_query_engine(
+            engine_kwargs = dict(
                 similarity_top_k=top_k,
                 text_qa_template=qa_prompt_tmpl,
                 response_mode="compact",
@@ -427,6 +470,13 @@ class RAGEngine:
                 verbose=False,
                 llm=llm,
             )
+            if exclude_node_ids:
+                # Запрашиваем с запасом, чтобы после фильтрации осталось ~top_k.
+                engine_kwargs["similarity_top_k"] = top_k + len(exclude_node_ids)
+                engine_kwargs["node_postprocessors"] = [
+                    _ExcludeNodeIdsPostprocessor(exclude_node_ids)
+                ]
+            query_engine = self.index.as_query_engine(**engine_kwargs)
 
             response = query_engine.query(prompt)
             sources = []
@@ -436,6 +486,7 @@ class RAGEngine:
                     sources.append({
                         "file_name": meta.get("file_name", ""),
                         "file_path": meta.get("file_path", ""),
+                        "node_id": node.node.node_id,
                         "score": round(float(getattr(node, "score", 0.0) or 0.0), 4),
                     })
 
@@ -456,6 +507,186 @@ class RAGEngine:
             }
         except Exception as e:
             yield {"type": "error", "data": str(e)}
+
+    # ------------------------------------------------------------------
+    #  Поиск всех записок по теме (по полному пути, полный текст из индекса)
+    # ------------------------------------------------------------------
+    def memos(
+        self,
+        prompt: str,
+        temperature: Optional[float] = None,
+        page_size: int = 30,
+        max_pages: int = 15,
+    ):
+        """Находит все служебные записки по теме и возвращает полный текст.
+
+        Батчи по page_size чанков (исключая уже отданные node_id) — постраничный
+        обход индекса без повторов. Полный текст каждого документа собирается
+        из docstore индекса по file_path (узлы сортируются по start_char_idx) —
+        файлы повторно не парсятся и Word COM не задействуется.
+
+        Возвращает dict:
+          {ok, total, pages, documents: [{file_name, file_path, text}]}
+        либо {error: ...}.
+        """
+        if self.is_syncing:
+            return {"error": "Идет синхронизация"}
+        if not self.is_initialized or self.index is None:
+            return {"error": "Индекс не готов"}
+        if not prompt or not str(prompt).strip():
+            return {"error": "Поле 'prompt' обязательно"}
+
+        temperature = temperature if temperature is not None else 0.0
+        page_size = max(1, int(page_size))
+        max_pages = max(1, int(max_pages))
+
+        llm = self.provider.build_llm(
+            self.cfg.llm,
+            self.cfg.context_window,
+            temperature=temperature,
+        )
+
+        seen_ids = set()
+        found_paths = []  # порядок обнаружения документов
+        found_paths_set = set()
+        all_sources = []
+        pages_used = 0
+
+        for page in range(max_pages):
+            pages_used = page + 1
+            top_k = page_size + len(seen_ids)
+            retriever = self.index.as_retriever(similarity_top_k=top_k)
+            raw_nodes = retriever.retrieve(prompt)
+            nodes = [
+                n for n in raw_nodes
+                if n.node.node_id not in seen_ids
+            ][:page_size]
+            if not nodes:
+                break
+
+            page_ids = {n.node.node_id for n in nodes}
+            new_ids = page_ids - seen_ids
+            seen_ids |= new_ids
+            if not new_ids:
+                break
+
+            batch_paths = set()
+            context_parts = []
+            for n in nodes:
+                meta = n.node.metadata or {}
+                fp = meta.get("file_path", "")
+                if fp:
+                    batch_paths.add(fp)
+                    all_sources.append({
+                        "file_name": meta.get("file_name", fp),
+                        "file_path": fp,
+                        "node_id": n.node.node_id,
+                        "score": round(float(getattr(n, "score", 0.0) or 0.0), 4),
+                    })
+                context_parts.append(f"[Файл: {fp}]\n{n.node.get_content()}")
+
+            sys_prompt = _MEMO_BATCH_SYSTEM_PROMPT.format(
+                topic=prompt,
+                page_no=page + 1,
+                previously=", ".join(found_paths) if found_paths else "нет",
+            )
+            user_prompt = (
+                sys_prompt
+                + "\n\nФрагменты документов (каждый помечен строкой "
+                "[Файл: <полный путь>]):\n"
+                + "\n\n".join(context_parts)
+            )
+            try:
+                answer = llm.complete(user_prompt).text or ""
+            except Exception as e:
+                return {"error": f"Ошибка LLM на батче {page + 1}: {e}"}
+
+            added_any = False
+            for m in re.finditer(r"ПУТЬ:\s*(\S[^\n]*)", answer):
+                path = m.group(1).strip()
+                if path in batch_paths and path not in found_paths_set:
+                    found_paths.append(path)
+                    found_paths_set.add(path)
+                    added_any = True
+
+            if "НОВЫХ ЗАПИСОК НЕТ" in answer.upper() and not added_any:
+                break
+
+        documents = []
+        nodes_by_path = self._index_nodes_by_path()
+        for fp in found_paths:
+            documents.append({
+                "file_name": os.path.basename(fp) or fp,
+                "file_path": fp,
+                "text": self._assemble_document_text(fp, nodes_by_path.get(fp)),
+            })
+
+        return {
+            "ok": True,
+            "total": len(documents),
+            "pages": pages_used,
+            "documents": documents,
+        }
+
+    def _index_nodes_by_path(self) -> dict:
+        """Строит file_path -> [nodes] по docstore один раз (O(N) за вызов).
+
+        Используется для сборки полного текста множества документов:
+        вместо вложенного сканирования docstore на каждый файл (O(N*M)).
+        """
+        if not self.index:
+            return {}
+        try:
+            docs = self.index.docstore.docs or {}
+        except Exception:
+            return {}
+        by_path = {}
+        for n in docs.values():
+            fp = (n.metadata or {}).get("file_path")
+            if fp and getattr(n, "start_char_idx", None) is not None:
+                by_path.setdefault(fp, []).append(n)
+        for nodes in by_path.values():
+            nodes.sort(key=lambda n: n.start_char_idx)
+        return by_path
+
+    def _assemble_document_text(self, file_path: str,
+                                nodes: Optional[list] = None) -> Optional[str]:
+        """Собирает полный текст документа из узлов docstore по file_path.
+
+        Узлы сортируются по start_char_idx; перекрытия (chunk_overlap)
+        вырезаются. Если узлов в индексе нет — возвращает None.
+        Принимает готовый список узлов (из _index_nodes_by_path), иначе
+        сканирует docstore (режим одного файла).
+        """
+        if not self.index:
+            return None
+        if nodes is None:
+            try:
+                nodes = [
+                    n for n in (self.index.docstore.docs or {}).values()
+                    if (n.metadata or {}).get("file_path") == file_path
+                    and getattr(n, "start_char_idx", None) is not None
+                ]
+            except Exception:
+                return None
+            if not nodes:
+                return None
+            nodes.sort(key=lambda n: n.start_char_idx)
+        if not nodes:
+            return None
+
+        full = ""
+        prev_end = 0
+        for n in nodes:
+            start = n.start_char_idx
+            text = n.text or ""
+            if start >= prev_end:
+                full += text
+            else:
+                overlap = prev_end - start
+                full += text[overlap:]
+            prev_end = n.end_char_idx
+        return full or None
 
     # ------------------------------------------------------------------
     #  Статус и доступ к конфигу

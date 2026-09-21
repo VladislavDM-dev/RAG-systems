@@ -40,3 +40,14 @@ def test_get_all_paths_and_hashes(tmp_path):
     mgr.save("c.docx", "3")
     assert mgr.get_all_paths() == ["a.docx", "b.docx", "c.docx"]
     assert mgr.get_all_hashes() == {"a.docx": "1", "b.docx": "2", "c.docx": "3"}
+
+
+def test_close_releases_file_for_delete(tmp_path):
+    db_path = str(tmp_path / "h.db")
+    mgr = FileHashManager(db_path=db_path)
+    mgr.save("a.docx", "1")
+    mgr.close()
+    assert mgr.conn is None
+    import os
+    os.remove(db_path)
+    assert not os.path.exists(db_path)

@@ -50,10 +50,12 @@ def agent_stream():
     найденного в RAG контекста. События: token / sources / done / error.
 
     Тело запроса (JSON):
-        prompt: str          — промпт/вопрос агента (обязательно)
-        system_prompt: str   — системная инструкция для LLM (опционально)
-        top_k: int           — сколько релевантных фрагментов использовать
-        temperature: float   — температура LLM (опционально)
+        prompt: str            — промпт/вопрос агента (обязательно)
+        system_prompt: str     — системная инструкция для LLM (опционально)
+        top_k: int             — сколько релевантных фрагментов использовать
+        temperature: float     — температура LLM (опционально)
+        exclude_node_ids: [..] — node_id уже отданных фрагментов; они
+                                 исключаются из ретрива (постраничный обход)
     """
     data = request.get_json(silent=True) or {}
     prompt = (data.get("prompt") or data.get("question") or "").strip()
@@ -69,6 +71,7 @@ def agent_stream():
     system_prompt = data.get("system_prompt") or None
     top_k = data.get("top_k")
     temperature = data.get("temperature")
+    exclude_node_ids = data.get("exclude_node_ids")
 
     def generate():
         for event in engine.agent_stream(
@@ -76,6 +79,7 @@ def agent_stream():
             system_prompt=system_prompt,
             top_k=top_k,
             temperature=temperature,
+            exclude_node_ids=exclude_node_ids,
         ):
             payload = {"type": event["type"], "data": event.get("data", "")}
             if event["type"] == "done":
@@ -227,6 +231,29 @@ def engine_status():
 # ---------------------------------------------------------------------------
 #  Утилиты
 # ---------------------------------------------------------------------------
+@app.route(f"{API_PREFIX}/memos", methods=["POST"])
+def memos():
+    """Поиск всех служебных записок по теме: список документов с полным текстом.
+
+    Полный текст собирается из индекса (docstore), файлы не парсятся повторно.
+    """
+    data = request.get_json(silent=True) or {}
+    prompt = (data.get("prompt") or "").strip()
+    if not prompt:
+        return jsonify({"error": "Поле 'prompt' обязательно"}), 400
+
+    result = engine.memos(
+        prompt,
+        temperature=data.get("temperature"),
+        page_size=data.get("page_size", 30),
+        max_pages=data.get("max_pages", 15),
+    )
+    if result.get("error"):
+        code = 503 if "синхронизац" in str(result["error"]).lower() or "не готов" in str(result["error"]).lower() else 500
+        return jsonify(result), code
+    return jsonify(result)
+
+
 @app.route(f"{API_PREFIX}/parse", methods=["POST"])
 def parse_file():
     """Парсинг одного файла (для отладки/проверки)."""

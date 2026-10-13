@@ -429,3 +429,244 @@ def test_detect_memos_topic_plain_queries():
     assert detect_memos_topic("покажи мемо") is None
     assert detect_memos_topic(None) is None
     assert detect_memos_topic("") is None
+
+
+# --- Расписание использования (запрет) ---
+
+from datetime import datetime
+
+
+def _today_days():
+    return [datetime.now().weekday()]
+
+
+def test_admin_schedule_crud(logged_client):
+    resp = logged_client.post("/api/admin/schedule", json={
+        "days": _today_days(), "start_time": "00:00", "end_time": "00:00",
+        "message": "Нет доступа",
+    })
+    assert resp.status_code == 200
+    items = resp.get_json()["restrictions"]
+    assert len(items) == 1
+    assert items[0]["message"] == "Нет доступа"
+    assert items[0]["active"] is True
+    rid = items[0]["id"]
+
+    resp = logged_client.put(f"/api/admin/schedule/{rid}", json={"active": False})
+    assert resp.status_code == 200
+    assert resp.get_json()["restrictions"][0]["active"] is False
+
+    resp = logged_client.put(f"/api/admin/schedule/{rid}", json={"message": "Новый текст"})
+    assert resp.status_code == 200
+    assert resp.get_json()["restrictions"][0]["message"] == "Новый текст"
+
+    resp = logged_client.delete(f"/api/admin/schedule/{rid}")
+    assert resp.status_code == 200
+    assert resp.get_json()["restrictions"] == []
+
+
+def test_admin_schedule_validation(logged_client):
+    bad_payloads = [
+        {"days": [], "start_time": "10:00", "end_time": "11:00", "message": "x"},
+        {"days": [7], "start_time": "10:00", "end_time": "11:00", "message": "x"},
+        {"days": [0], "start_time": "25:00", "end_time": "11:00", "message": "x"},
+        {"days": [0], "start_time": "10:00", "end_time": "11:00", "message": "  "},
+    ]
+    for payload in bad_payloads:
+        resp = logged_client.post("/api/admin/schedule", json=payload)
+        assert resp.status_code == 400, payload
+
+
+def test_schedule_blocks_stream_and_status(logged_client):
+    # Ограничение на весь сегодняшний день (start == end → 24 ч).
+    resp = logged_client.post("/api/admin/schedule", json={
+        "days": _today_days(), "start_time": "00:00", "end_time": "00:00",
+        "message": "Сервис на обслуживании",
+    })
+    assert resp.status_code == 200
+
+    # Администратор не блокируется.
+    resp = logged_client.get("/api/status")
+    data = resp.get_json()
+    assert data["restricted"] is False
+    assert data["restriction_message"] == ""
+
+    # Обычный пользователь получает блокировку с текстом.
+    resp = logged_client.post("/api/admin/users", json={"username": "user1", "password": "secret1"})
+    assert resp.status_code == 200
+    import re
+    tok = re.search(r'name="csrf_token" value="([^"]+)"',
+                    logged_client.get("/").get_data(as_text=True)).group(1)
+    resp = logged_client.post("/login", data={
+        "username": "user1", "password": "secret1", "csrf_token": tok,
+    }, follow_redirects=True)
+    assert resp.status_code == 200
+
+    resp = logged_client.get("/api/status")
+    data = resp.get_json()
+    assert data["restricted"] is True
+    assert data["restriction_message"] == "Сервис на обслуживании"
+
+    resp = logged_client.post("/api/chat/stream", json={"prompt": "Привет"})
+    assert resp.status_code == 403
+    assert resp.get_json()["error"] == "Сервис на обслуживании"
+    assert resp.get_json()["restricted"] is True
+
+
+def test_schedule_inactive_not_applied(logged_client):
+    resp = logged_client.post("/api/admin/schedule", json={
+        "days": _today_days(), "start_time": "00:00", "end_time": "00:00",
+        "message": "Нет доступа", "active": False,
+    })
+    assert resp.status_code == 200
+    resp = logged_client.get("/api/status")
+    assert resp.get_json()["restricted"] is False
+
+
+def test_schedule_requires_admin(logged_client):
+    resp = logged_client.post("/api/admin/users", json={"username": "user1", "password": "secret1"})
+    assert resp.status_code == 200
+    import re
+    tok = re.search(r'name="csrf_token" value="([^"]+)"',
+                    logged_client.get("/").get_data(as_text=True)).group(1)
+    resp = logged_client.post("/login", data={
+        "username": "user1", "password": "secret1", "csrf_token": tok,
+    }, follow_redirects=True)
+    assert resp.status_code == 200
+
+    assert logged_client.get("/api/admin/schedule").status_code == 403
+    assert logged_client.get("/api/admin/notifications").status_code == 403
+    assert logged_client.post("/api/admin/schedule", json={
+        "days": [0], "start_time": "10:00", "end_time": "11:00", "message": "x",
+    }).status_code == 403
+
+
+# --- Уведомления ---
+
+def test_notifications_flow(logged_client):
+    resp = logged_client.post("/api/admin/notifications", json={"text": "Профилактика в пятницу"})
+    assert resp.status_code == 200
+    items = resp.get_json()["notifications"]
+    assert len(items) == 1
+    nid = items[0]["id"]
+
+    resp = logged_client.get("/api/notifications")
+    assert resp.status_code == 200
+    assert any(n["id"] == nid for n in resp.get_json()["notifications"])
+
+    resp = logged_client.post(f"/api/notifications/{nid}/dismiss")
+    assert resp.status_code == 200
+    resp = logged_client.get("/api/notifications")
+    assert all(n["id"] != nid for n in resp.get_json()["notifications"])
+
+    # Повторный dismiss не падает.
+    resp = logged_client.post(f"/api/notifications/{nid}/dismiss")
+    assert resp.status_code == 200
+
+    resp = logged_client.delete(f"/api/admin/notifications/{nid}")
+    assert resp.status_code == 200
+    assert resp.get_json()["notifications"] == []
+
+
+def test_notifications_validation(logged_client):
+    resp = logged_client.post("/api/admin/notifications", json={"text": "  "})
+    assert resp.status_code == 400
+
+
+def test_chat_page_has_notifications_container(logged_client):
+    html = logged_client.get("/").get_data(as_text=True)
+    assert "notifications-container" in html
+    assert "restriction-banner" in html
+    assert "notifications.js" in html
+
+
+# --- Сообщения администратору (обратная связь) ---
+
+def test_feedback_flow(logged_client):
+    resp = logged_client.post("/api/feedback", json={"text": "Ошибка при выгрузке записки"})
+    assert resp.status_code == 200
+
+    resp = logged_client.get("/api/admin/messages")
+    assert resp.status_code == 200
+    items = resp.get_json()["messages"]
+    assert len(items) == 1
+    assert items[0]["text"] == "Ошибка при выгрузке записки"
+    assert items[0]["username"] == "admin"
+    assert items[0]["is_read"] is False
+    mid = items[0]["id"]
+
+    resp = logged_client.post(f"/api/admin/messages/{mid}/read", json={"is_read": True})
+    assert resp.status_code == 200
+    assert resp.get_json()["messages"][0]["is_read"] is True
+
+    resp = logged_client.delete(f"/api/admin/messages/{mid}")
+    assert resp.status_code == 200
+    assert resp.get_json()["messages"] == []
+
+
+def test_feedback_validation(logged_client):
+    assert logged_client.post("/api/feedback", json={"text": "  "}).status_code == 400
+    assert logged_client.post("/api/feedback", json={"text": "х" * 2001}).status_code == 400
+
+
+def test_feedback_requires_admin_for_listing(logged_client):
+    resp = logged_client.post("/api/admin/users", json={"username": "user1", "password": "secret1"})
+    assert resp.status_code == 200
+    import re
+    tok = re.search(r'name="csrf_token" value="([^"]+)"',
+                    logged_client.get("/").get_data(as_text=True)).group(1)
+    resp = logged_client.post("/login", data={
+        "username": "user1", "password": "secret1", "csrf_token": tok,
+    }, follow_redirects=True)
+    assert resp.status_code == 200
+    # пользователь может писать, но не читать список
+    assert logged_client.post("/api/feedback", json={"text": "привет"}).status_code == 200
+    assert logged_client.get("/api/admin/messages").status_code == 403
+
+
+# --- Смена пароля ---
+
+def test_password_change_wrong_current(logged_client):
+    resp = logged_client.post("/api/password", json={
+        "current_password": "nope", "new_password": "newpass1",
+    })
+    assert resp.status_code == 400
+    assert "неверен" in resp.get_json()["error"].lower()
+
+
+def test_password_change_short_and_same(logged_client):
+    resp = logged_client.post("/api/password", json={
+        "current_password": "admin123", "new_password": "123",
+    })
+    assert resp.status_code == 400
+    resp = logged_client.post("/api/password", json={
+        "current_password": "admin123", "new_password": "admin123",
+    })
+    assert resp.status_code == 400
+
+
+def test_password_change_and_login_with_new(logged_client):
+    resp = logged_client.post("/api/password", json={
+        "current_password": "admin123", "new_password": "newpass1",
+    })
+    assert resp.status_code == 200
+
+    import re
+    tok = re.search(r'name="csrf_token" value="([^"]+)"',
+                    logged_client.get("/").get_data(as_text=True)).group(1)
+    logged_client.post("/logout", data={"csrf_token": tok}, follow_redirects=True)
+
+    tok = re.search(r'name="csrf_token" value="([^"]+)"',
+                    logged_client.get("/login").get_data(as_text=True)).group(1)
+    resp = logged_client.post("/login", data={
+        "username": "admin", "password": "newpass1", "csrf_token": tok,
+    }, follow_redirects=True)
+    assert resp.status_code == 200
+    assert "Неверный логин или пароль" not in resp.get_data(as_text=True)
+    assert logged_client.get("/api/status").status_code == 200
+
+
+def test_admin_messages_page_has_ui(logged_client):
+    html = logged_client.get("/admin").get_data(as_text=True)
+    assert "admin-messages-list" in html
+    assert "adm-pass-current" in html

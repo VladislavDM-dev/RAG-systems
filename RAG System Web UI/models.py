@@ -19,6 +19,7 @@ class User(UserMixin, db.Model):
 
     conversations = db.relationship("Conversation", backref="user", lazy="dynamic", cascade="all, delete-orphan")
     favorites = db.relationship("Favorite", backref="user", lazy="dynamic", cascade="all, delete-orphan")
+    admin_messages = db.relationship("AdminMessage", backref="user", lazy="dynamic", cascade="all, delete-orphan")
 
     def set_password(self, password: str):
         self.password_hash = generate_password_hash(password)
@@ -119,3 +120,83 @@ class MemoState(db.Model):
     def to_dict(self):
         import json
         return json.loads(self.state_json) if self.state_json else {}
+
+
+class UsageRestriction(db.Model):
+    """Ограничение доступа по расписанию: дни недели + диапазон времени + текст блокировки."""
+
+    __tablename__ = "usage_restrictions"
+
+    id = db.Column(db.Integer, primary_key=True)
+    days_json = db.Column(db.Text, nullable=False, default="[]")  # [0..6], 0=Пн (datetime.weekday)
+    start_time = db.Column(db.String(5), nullable=False)  # "HH:MM"
+    end_time = db.Column(db.String(5), nullable=False)    # "HH:MM"; start == end → весь день
+    message = db.Column(db.Text, nullable=False, default="")  # общий текст блокировки
+    active = db.Column(db.Boolean, nullable=False, default=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    def to_dict(self):
+        import json
+        return {
+            "id": self.id,
+            "days": json.loads(self.days_json) if self.days_json else [],
+            "start_time": self.start_time,
+            "end_time": self.end_time,
+            "message": self.message,
+            "active": bool(self.active),
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+
+
+class Notification(db.Model):
+    """Уведомление администратора для пользователей (показывается сверху)."""
+
+    __tablename__ = "notifications"
+
+    id = db.Column(db.Integer, primary_key=True)
+    text = db.Column(db.Text, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "text": self.text,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+
+
+class NotificationDismissed(db.Model):
+    """Отметка: пользователь закрыл уведомление (клик или крестик)."""
+
+    __tablename__ = "notification_dismissed"
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    notification_id = db.Column(db.Integer, db.ForeignKey("notifications.id"), nullable=False, index=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        db.UniqueConstraint("user_id", "notification_id", name="uq_user_notification"),
+    )
+
+
+class AdminMessage(db.Model):
+    """Сообщение пользователя администратору (об ошибке / обратная связь)."""
+
+    __tablename__ = "admin_messages"
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    text = db.Column(db.Text, nullable=False)
+    is_read = db.Column(db.Boolean, nullable=False, default=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "user_id": self.user_id,
+            "username": self.user.username if self.user else None,
+            "text": self.text,
+            "is_read": bool(self.is_read),
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }

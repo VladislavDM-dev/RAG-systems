@@ -2,6 +2,7 @@
 const Sync = {
     wasSyncing: false,
     dismissed: false,
+    restrictionShown: false,
     timer: null,
 
     init() {
@@ -55,7 +56,7 @@ const Sync = {
             const statusText = document.getElementById('sync-status-text');
             const percentText = document.getElementById('sync-percent-text');
 
-            Chat.serverReady = !data.is_syncing && !!data.initialized;
+            Chat.serverReady = !data.is_syncing && !!data.initialized && !data.restricted;
 
             if (data.is_syncing || !data.initialized) {
                 this.wasSyncing = true;
@@ -80,7 +81,9 @@ const Sync = {
                         this.dismissed = false;
                     }
                 }
-                if (data.initialized && !Chat.inputsUnlocked && !Chat.isGenerating) {
+                if (data.restricted) {
+                    this.applyRestriction(data.restriction_message);
+                } else if (data.initialized && !Chat.inputsUnlocked && !Chat.isGenerating) {
                     Chat.unlockInputs(true);
                     const status = Chat.systemStatus;
                     if (status) {
@@ -99,6 +102,22 @@ const Sync = {
             }
             Chat.unlockInputs(false);
         }
+    },
+
+    applyRestriction(message) {
+        Chat.unlockInputs(false);
+        Chat.serverReady = false;
+        const status = Chat.systemStatus;
+        if (status) {
+            status.textContent = message || 'Доступ ограничен по расписанию';
+            status.className = 'text-danger fw-bold';
+        }
+        if (this.restrictionShown) return;
+        this.restrictionShown = true;
+        const banner = document.getElementById('restriction-banner');
+        if (!banner) return;
+        banner.textContent = message || 'Доступ к системе временно ограничен по расписанию.';
+        banner.classList.remove('d-none');
     },
 
     start() {

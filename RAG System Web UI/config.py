@@ -42,7 +42,7 @@ class Config:
     OPEN_REGISTRATION = os.environ.get("OPEN_REGISTRATION", "true").lower() == "true"
     DEFAULT_ADMIN_PASSWORD = os.environ.get("DEFAULT_ADMIN_PASSWORD", "admin123")
 
-    MEMO_JS_VERSION = "20260916-15"
+    MEMO_JS_VERSION = "20261013-02"
 
     SYSTEM_PROMPT_RAG = (
         "Ты — RAG-ассистент, отвечающий на основе предоставленных документов. "

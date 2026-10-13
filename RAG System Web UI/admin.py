@@ -1,9 +1,12 @@
 """Blueprint: админ-панель."""
+import json
+
 from flask import Blueprint, render_template, request, jsonify, current_app
 from flask_login import login_required, current_user
 
 from extensions import db, csrf
-from models import User
+from models import User, UsageRestriction, Notification, AdminMessage
+from schedule import TIME_RE
 
 admin = Blueprint("admin", __name__)
 
@@ -216,3 +219,179 @@ def api_users_set_password(uid):
     db.session.commit()
     users = User.query.all()
     return jsonify({"ok": True, "users": [u.to_dict() for u in users]})
+
+
+def _schedule_list():
+    items = UsageRestriction.query.order_by(UsageRestriction.id).all()
+    return {"restrictions": [r.to_dict() for r in items]}
+
+
+def _parse_schedule_payload(data, partial=False):
+    """Валидация payload расписания. Возвращает (values, error)."""
+    values = {}
+    if not partial or "days" in data:
+        days = data.get("days")
+        if (not isinstance(days, list) or not days
+                or not all(isinstance(d, int) and not isinstance(d, bool) and 0 <= d <= 6 for d in days)):
+            return None, "Поле 'days' — непустой список чисел 0..6 (0=Пн)"
+        values["days_json"] = json.dumps(sorted(set(days)))
+    for field in ("start_time", "end_time"):
+        if not partial or field in data:
+            val = (data.get(field) or "").strip()
+            if not TIME_RE.match(val):
+                return None, f"Поле '{field}' — время в формате HH:MM"
+            values[field] = val
+    if not partial or "message" in data:
+        msg = (data.get("message") or "").strip()
+        if not msg:
+            return None, "Поле 'message' обязательно — текст блокировки для пользователя"
+        values["message"] = msg
+    if "active" in data:
+        values["active"] = bool(data.get("active"))
+    return values, None
+
+
+@admin.route("/api/admin/schedule", methods=["GET"])
+@login_required
+@admin_required
+def api_schedule_list():
+    return jsonify(_schedule_list())
+
+
+@admin.route("/api/admin/schedule", methods=["POST"])
+@login_required
+@admin_required
+@csrf.exempt
+def api_schedule_add():
+    data = request.get_json(silent=True) or {}
+    values, error = _parse_schedule_payload(data)
+    if error:
+        return jsonify({"error": error}), 400
+    item = UsageRestriction(
+        days_json=values["days_json"],
+        start_time=values["start_time"],
+        end_time=values["end_time"],
+        message=values["message"],
+        active=values.get("active", True),
+    )
+    db.session.add(item)
+    db.session.commit()
+    return jsonify({"ok": True, **_schedule_list()})
+
+
+@admin.route("/api/admin/schedule/<int:rid>", methods=["PUT"])
+@login_required
+@admin_required
+@csrf.exempt
+def api_schedule_update(rid):
+    item = db.session.get(UsageRestriction, rid)
+    if item is None:
+        return jsonify({"error": "Ограничение не найдено"}), 404
+    data = request.get_json(silent=True) or {}
+    if not data:
+        return jsonify({"error": "Пустой запрос"}), 400
+    values, error = _parse_schedule_payload(data, partial=True)
+    if error:
+        return jsonify({"error": error}), 400
+    if "days_json" in values:
+        item.days_json = values["days_json"]
+    for field in ("start_time", "end_time", "message", "active"):
+        if field in values:
+            setattr(item, field, values[field])
+    db.session.commit()
+    return jsonify({"ok": True, **_schedule_list()})
+
+
+@admin.route("/api/admin/schedule/<int:rid>", methods=["DELETE"])
+@login_required
+@admin_required
+@csrf.exempt
+def api_schedule_delete(rid):
+    item = db.session.get(UsageRestriction, rid)
+    if item is None:
+        return jsonify({"error": "Ограничение не найдено"}), 404
+    db.session.delete(item)
+    db.session.commit()
+    return jsonify({"ok": True, **_schedule_list()})
+
+
+def _notification_list():
+    items = Notification.query.order_by(Notification.created_at.desc()).all()
+    return {"notifications": [n.to_dict() for n in items]}
+
+
+@admin.route("/api/admin/notifications", methods=["GET"])
+@login_required
+@admin_required
+def api_notifications_list():
+    return jsonify(_notification_list())
+
+
+@admin.route("/api/admin/notifications", methods=["POST"])
+@login_required
+@admin_required
+@csrf.exempt
+def api_notifications_add():
+    data = request.get_json(silent=True) or {}
+    text = (data.get("text") or "").strip()
+    if not text:
+        return jsonify({"error": "Поле 'text' обязательно"}), 400
+    item = Notification(text=text)
+    db.session.add(item)
+    db.session.commit()
+    return jsonify({"ok": True, **_notification_list()})
+
+
+@admin.route("/api/admin/notifications/<int:nid>", methods=["DELETE"])
+@login_required
+@admin_required
+@csrf.exempt
+def api_notifications_delete(nid):
+    item = db.session.get(Notification, nid)
+    if item is None:
+        return jsonify({"error": "Уведомление не найдено"}), 404
+    from models import NotificationDismissed
+    NotificationDismissed.query.filter_by(notification_id=nid).delete()
+    db.session.delete(item)
+    db.session.commit()
+    return jsonify({"ok": True, **_notification_list()})
+
+
+def _admin_message_list():
+    items = AdminMessage.query.order_by(AdminMessage.is_read.asc(),
+                                        AdminMessage.created_at.desc()).all()
+    return {"messages": [m.to_dict() for m in items]}
+
+
+@admin.route("/api/admin/messages", methods=["GET"])
+@login_required
+@admin_required
+def api_admin_messages_list():
+    return jsonify(_admin_message_list())
+
+
+@admin.route("/api/admin/messages/<int:mid>/read", methods=["POST"])
+@login_required
+@admin_required
+@csrf.exempt
+def api_admin_message_read(mid):
+    item = db.session.get(AdminMessage, mid)
+    if item is None:
+        return jsonify({"error": "Сообщение не найдено"}), 404
+    data = request.get_json(silent=True) or {}
+    item.is_read = bool(data.get("is_read", True))
+    db.session.commit()
+    return jsonify({"ok": True, **_admin_message_list()})
+
+
+@admin.route("/api/admin/messages/<int:mid>", methods=["DELETE"])
+@login_required
+@admin_required
+@csrf.exempt
+def api_admin_message_delete(mid):
+    item = db.session.get(AdminMessage, mid)
+    if item is None:
+        return jsonify({"error": "Сообщение не найдено"}), 404
+    db.session.delete(item)
+    db.session.commit()
+    return jsonify({"ok": True, **_admin_message_list()})

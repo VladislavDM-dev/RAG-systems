@@ -138,6 +138,39 @@
                         </form>
                     </div>
                 </div>
+
+                <!-- Сообщения от пользователей -->
+                <div class="card shadow-sm mt-4">
+                    <div class="card-header bg-white fw-bold">
+                        <i class="bi bi-envelope me-2"></i>Сообщения от пользователей
+                        <span id="admin-messages-badge" class="badge bg-danger ms-1 d-none">0</span>
+                    </div>
+                    <div class="card-body">
+                        <div id="admin-messages-list" class="d-flex flex-column gap-2"></div>
+                    </div>
+                </div>
+
+                <!-- Смена пароля администратора -->
+                <div class="card shadow-sm mt-4">
+                    <div class="card-header bg-white fw-bold"><i class="bi bi-key me-2"></i>Смена моего пароля</div>
+                    <div class="card-body">
+                        <div class="mb-2">
+                            <label class="form-label small mb-1" for="adm-pass-current">Текущий пароль</label>
+                            <input type="password" id="adm-pass-current" class="form-control form-control-sm" autocomplete="current-password">
+                        </div>
+                        <div class="mb-2">
+                            <label class="form-label small mb-1" for="adm-pass-new">Новый пароль</label>
+                            <input type="password" id="adm-pass-new" class="form-control form-control-sm" autocomplete="new-password">
+                        </div>
+                        <div class="mb-2">
+                            <label class="form-label small mb-1" for="adm-pass-confirm">Повторите новый пароль</label>
+                            <input type="password" id="adm-pass-confirm" class="form-control form-control-sm" autocomplete="new-password">
+                        </div>
+                        <button id="adm-pass-btn" class="btn btn-outline-primary btn-sm">
+                            <i class="bi bi-check-lg me-1"></i>Сменить пароль
+                        </button>
+                    </div>
+                </div>
             </div>
 
             <div class="col-lg-6">
@@ -189,6 +222,83 @@
                                 <input type="file" id="memo-template-file" accept=".dotx" class="d-none">
                             </label>
                         </div>
+                    </div>
+                </div>
+
+                <!-- Расписание использования (запрет) -->
+                <div class="card shadow-sm mt-4">
+                    <div class="card-header bg-white fw-bold"><i class="bi bi-calendar-week me-2"></i>Расписание использования (запрет)</div>
+                    <div class="card-body">
+                        <div id="schedule-list" class="d-flex flex-column gap-2 mb-3"></div>
+                        <div class="border rounded p-2">
+                            <div class="mb-2">
+                                <label class="form-label small mb-1 fw-bold">Дни недели</label>
+                                <div id="schedule-days" class="d-flex flex-wrap gap-2">
+                                    <div class="form-check form-check-inline mb-0">
+                                        <input class="form-check-input" type="checkbox" id="day-0" value="0">
+                                        <label class="form-check-label small" for="day-0">Пн</label>
+                                    </div>
+                                    <div class="form-check form-check-inline mb-0">
+                                        <input class="form-check-input" type="checkbox" id="day-1" value="1">
+                                        <label class="form-check-label small" for="day-1">Вт</label>
+                                    </div>
+                                    <div class="form-check form-check-inline mb-0">
+                                        <input class="form-check-input" type="checkbox" id="day-2" value="2">
+                                        <label class="form-check-label small" for="day-2">Ср</label>
+                                    </div>
+                                    <div class="form-check form-check-inline mb-0">
+                                        <input class="form-check-input" type="checkbox" id="day-3" value="3">
+                                        <label class="form-check-label small" for="day-3">Чт</label>
+                                    </div>
+                                    <div class="form-check form-check-inline mb-0">
+                                        <input class="form-check-input" type="checkbox" id="day-4" value="4">
+                                        <label class="form-check-label small" for="day-4">Пт</label>
+                                    </div>
+                                    <div class="form-check form-check-inline mb-0">
+                                        <input class="form-check-input" type="checkbox" id="day-5" value="5">
+                                        <label class="form-check-label small" for="day-5">Сб</label>
+                                    </div>
+                                    <div class="form-check form-check-inline mb-0">
+                                        <input class="form-check-input" type="checkbox" id="day-6" value="6">
+                                        <label class="form-check-label small" for="day-6">Вс</label>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="row g-2 mb-2">
+                                <div class="col-6">
+                                    <label class="form-label small mb-1" for="schedule-start">С</label>
+                                    <input type="time" id="schedule-start" class="form-control form-control-sm">
+                                </div>
+                                <div class="col-6">
+                                    <label class="form-label small mb-1" for="schedule-end">По</label>
+                                    <input type="time" id="schedule-end" class="form-control form-control-sm">
+                                </div>
+                            </div>
+                            <div class="mb-2">
+                                <label class="form-label small mb-1" for="schedule-message">Текст блокировки (общий, показывается пользователю)</label>
+                                <textarea id="schedule-message" class="form-control form-control-sm" rows="2"
+                                          placeholder="Доступ к системе временно ограничен по расписанию."></textarea>
+                            </div>
+                            <button id="schedule-add-btn" class="btn btn-outline-primary btn-sm">
+                                <i class="bi bi-plus-lg me-1"></i>Добавить ограничение
+                            </button>
+                            <div class="form-text mt-1">Начало и конец совпадают — запрет на весь день. Диапазон через полночь поддерживается. Администраторы не блокируются.</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Уведомления пользователям -->
+                <div class="card shadow-sm mt-4">
+                    <div class="card-header bg-white fw-bold"><i class="bi bi-bell me-2"></i>Уведомления пользователям</div>
+                    <div class="card-body">
+                        <div id="notifications-list" class="d-flex flex-column gap-1 mb-2"></div>
+                        <div class="input-group input-group-sm">
+                            <input type="text" id="notification-input" class="form-control" placeholder="Текст уведомления">
+                            <button id="notification-add-btn" class="btn btn-outline-primary btn-sm">
+                                <i class="bi bi-send"></i>
+                            </button>
+                        </div>
+                        <div class="form-text mt-1">Уведомление показывается пользователям сверху и скрывается по клику или крестику.</div>
                     </div>
                 </div>
             </div>

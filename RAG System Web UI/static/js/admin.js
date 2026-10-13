@@ -300,11 +300,260 @@ async function resetConfig() {
     }
 }
 
+// === Расписание использования (запрет) ===
+const SCHEDULE_DAYS = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
+
+async function loadSchedule() {
+    try {
+        const res = await apiFetch('/api/admin/schedule');
+        const data = await res.json();
+        const list = document.getElementById('schedule-list');
+        list.innerHTML = '';
+        const items = data.restrictions || [];
+        if (!items.length) {
+            list.innerHTML = '<div class="small text-muted">Ограничений нет</div>';
+            return;
+        }
+        items.forEach(r => {
+            const days = (r.days || []).map(d => SCHEDULE_DAYS[d] || d).join(', ');
+            const item = document.createElement('div');
+            item.className = 'schedule-item';
+            item.innerHTML = `
+                <div class="d-flex align-items-start gap-2">
+                    <div class="flex-grow-1">
+                        <div class="fw-bold small">${escapeHtml(days)} ${escapeHtml(r.start_time)}–${escapeHtml(r.end_time)}
+                            <span class="badge ${r.active ? 'bg-success' : 'bg-secondary'}">${r.active ? 'Активно' : 'Выкл'}</span>
+                        </div>
+                        <div class="small text-muted">${escapeHtml(r.message || '')}</div>
+                    </div>
+                    <div class="d-flex gap-1">
+                        <button class="btn btn-sm btn-outline-secondary schedule-toggle" data-rid="${r.id}" title="Включить/выключить">
+                            <i class="bi bi-power"></i>
+                        </button>
+                        <button class="btn btn-sm btn-outline-danger schedule-del" data-rid="${r.id}" title="Удалить">
+                            <i class="bi bi-trash"></i>
+                        </button>
+                    </div>
+                </div>`;
+            item.querySelector('.schedule-del').addEventListener('click', () => deleteRestriction(r.id));
+            item.querySelector('.schedule-toggle').addEventListener('click', () => toggleRestriction(r.id, !r.active));
+            list.appendChild(item);
+        });
+    } catch (e) {
+        console.error('Ошибка загрузки расписания:', e);
+    }
+}
+
+async function addRestriction() {
+    const days = [...document.querySelectorAll('#schedule-days input:checked')].map(c => parseInt(c.value, 10));
+    const start = document.getElementById('schedule-start').value;
+    const end = document.getElementById('schedule-end').value;
+    const message = document.getElementById('schedule-message').value.trim();
+    if (!days.length) { showToast('Выберите дни недели', 'warning'); return; }
+    if (!start || !end) { showToast('Укажите время начала и конца', 'warning'); return; }
+    if (!message) { showToast('Укажите текст блокировки', 'warning'); return; }
+    try {
+        const res = await apiFetch('/api/admin/schedule', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ days, start_time: start, end_time: end, message }),
+        });
+        const data = await res.json();
+        if (data.error) { showToast(data.error, 'danger'); return; }
+        document.querySelectorAll('#schedule-days input:checked').forEach(c => { c.checked = false; });
+        document.getElementById('schedule-message').value = '';
+        loadSchedule();
+        showToast('<i class="bi bi-check-lg me-2"></i>Ограничение добавлено');
+    } catch (e) {
+        showToast(e.message, 'danger');
+    }
+}
+
+async function deleteRestriction(rid) {
+    if (!confirm('Удалить ограничение расписания?')) return;
+    try {
+        await apiFetch('/api/admin/schedule/' + rid, { method: 'DELETE' });
+        loadSchedule();
+    } catch (e) {
+        showToast(e.message, 'danger');
+    }
+}
+
+async function toggleRestriction(rid, active) {
+    try {
+        await apiFetch('/api/admin/schedule/' + rid, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ active }),
+        });
+        loadSchedule();
+    } catch (e) {
+        showToast(e.message, 'danger');
+    }
+}
+
+// === Уведомления пользователям ===
+async function loadAdminNotifications() {
+    try {
+        const res = await apiFetch('/api/admin/notifications');
+        const data = await res.json();
+        const list = document.getElementById('notifications-list');
+        list.innerHTML = '';
+        const items = data.notifications || [];
+        if (!items.length) {
+            list.innerHTML = '<div class="small text-muted">Уведомлений нет</div>';
+            return;
+        }
+        items.forEach(n => {
+            const item = document.createElement('div');
+            item.className = 'notification-item';
+            item.innerHTML = `
+                <span class="small flex-grow-1">${escapeHtml(n.text)}</span>
+                <button class="btn btn-sm btn-link text-danger p-0 notification-del" data-nid="${n.id}" title="Удалить">
+                    <i class="bi bi-x-lg"></i>
+                </button>`;
+            item.querySelector('.notification-del').addEventListener('click', () => deleteNotification(n.id));
+            list.appendChild(item);
+        });
+    } catch (e) {
+        console.error('Ошибка загрузки уведомлений:', e);
+    }
+}
+
+async function addNotification() {
+    const input = document.getElementById('notification-input');
+    const text = input.value.trim();
+    if (!text) return;
+    try {
+        const res = await apiFetch('/api/admin/notifications', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text }),
+        });
+        const data = await res.json();
+        if (data.error) { showToast(data.error, 'danger'); return; }
+        input.value = '';
+        loadAdminNotifications();
+        showToast('<i class="bi bi-check-lg me-2"></i>Уведомление отправлено');
+    } catch (e) {
+        showToast(e.message, 'danger');
+    }
+}
+
+async function deleteNotification(nid) {
+    if (!confirm('Удалить уведомление?')) return;
+    try {
+        await apiFetch('/api/admin/notifications/' + nid, { method: 'DELETE' });
+        loadAdminNotifications();
+    } catch (e) {
+        showToast(e.message, 'danger');
+    }
+}
+
+// === Сообщения от пользователей ===
+async function loadAdminMessages() {
+    try {
+        const res = await apiFetch('/api/admin/messages');
+        const data = await res.json();
+        const list = document.getElementById('admin-messages-list');
+        const badge = document.getElementById('admin-messages-badge');
+        list.innerHTML = '';
+        const items = data.messages || [];
+        const unread = items.filter(m => !m.is_read).length;
+        if (badge) {
+            badge.textContent = unread;
+            badge.classList.toggle('d-none', unread === 0);
+        }
+        if (!items.length) {
+            list.innerHTML = '<div class="small text-muted">Сообщений нет</div>';
+            return;
+        }
+        items.forEach(m => {
+            const item = document.createElement('div');
+            item.className = 'admin-message-item' + (m.is_read ? ' read' : '');
+            item.innerHTML = `
+                <div class="d-flex align-items-start gap-2">
+                    <div class="flex-grow-1">
+                        <div class="small fw-bold">${escapeHtml(m.username || '?')}
+                            <span class="text-muted fw-normal">· ${escapeHtml((m.created_at || '').replace('T', ' ').slice(0, 16))}</span>
+                            ${m.is_read ? '' : '<span class="badge bg-danger ms-1">новое</span>'}
+                        </div>
+                        <div class="small">${escapeHtml(m.text)}</div>
+                    </div>
+                    <div class="d-flex gap-1">
+                        <button class="btn btn-sm btn-outline-secondary msg-read" data-mid="${m.id}" data-read="${m.is_read}"
+                                title="${m.is_read ? 'Отметить непрочитанным' : 'Отметить прочитанным'}">
+                            <i class="bi ${m.is_read ? 'bi-envelope' : 'bi-envelope-open'}"></i>
+                        </button>
+                        <button class="btn btn-sm btn-outline-danger msg-del" data-mid="${m.id}" title="Удалить">
+                            <i class="bi bi-trash"></i>
+                        </button>
+                    </div>
+                </div>`;
+            item.querySelector('.msg-read').addEventListener('click', () => setAdminMessageRead(m.id, !m.is_read));
+            item.querySelector('.msg-del').addEventListener('click', () => deleteAdminMessage(m.id));
+            list.appendChild(item);
+        });
+    } catch (e) {
+        console.error('Ошибка загрузки сообщений:', e);
+    }
+}
+
+async function setAdminMessageRead(mid, isRead) {
+    try {
+        await apiFetch('/api/admin/messages/' + mid + '/read', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ is_read: isRead }),
+        });
+        loadAdminMessages();
+    } catch (e) {
+        showToast(e.message, 'danger');
+    }
+}
+
+async function deleteAdminMessage(mid) {
+    if (!confirm('Удалить сообщение?')) return;
+    try {
+        await apiFetch('/api/admin/messages/' + mid, { method: 'DELETE' });
+        loadAdminMessages();
+    } catch (e) {
+        showToast(e.message, 'danger');
+    }
+}
+
+// === Смена собственного пароля (админ) ===
+async function changeOwnPassword() {
+    const cur = document.getElementById('adm-pass-current').value;
+    const newPass = document.getElementById('adm-pass-new').value;
+    const confirmPass = document.getElementById('adm-pass-confirm').value;
+    if (!cur || !newPass) { showToast('Заполните все поля', 'warning'); return; }
+    if (newPass !== confirmPass) { showToast('Новые пароли не совпадают', 'warning'); return; }
+    try {
+        const res = await apiFetch('/api/password', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ current_password: cur, new_password: newPass }),
+        });
+        const data = await res.json();
+        if (data.error) { showToast(data.error, 'danger'); return; }
+        document.getElementById('adm-pass-current').value = '';
+        document.getElementById('adm-pass-new').value = '';
+        document.getElementById('adm-pass-confirm').value = '';
+        showToast('<i class="bi bi-check-lg me-2"></i>Пароль изменён');
+    } catch (e) {
+        showToast(e.message, 'danger');
+    }
+}
+
 function init() {
     loadAdminInfo();
     loadFolders();
     loadUsers();
     loadMemoTemplateInfo();
+    loadSchedule();
+    loadAdminNotifications();
+    loadAdminMessages();
 
     document.getElementById('btn-sync').addEventListener('click', () => triggerSync(false));
     document.getElementById('btn-sync-reset').addEventListener('click', () => triggerSync(true));
@@ -316,6 +565,12 @@ function init() {
     document.getElementById('new-user-pass').addEventListener('keypress', (e) => {
         if (e.key === 'Enter') addUser();
     });
+    document.getElementById('schedule-add-btn').addEventListener('click', addRestriction);
+    document.getElementById('notification-add-btn').addEventListener('click', addNotification);
+    document.getElementById('notification-input').addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') addNotification();
+    });
+    document.getElementById('adm-pass-btn').addEventListener('click', changeOwnPassword);
     document.getElementById('memo-template-reload').addEventListener('click', async () => {
         try {
             await apiFetch('/api/admin/memo/template/reload', { method: 'POST' });

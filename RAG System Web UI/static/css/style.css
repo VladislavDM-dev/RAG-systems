@@ -509,3 +509,96 @@ body {
     word-break: break-all;
     margin-right: 8px;
 }
+
+/* Уведомления администратора (сверху, исчезают по клику/крестику) */
+#notifications-container {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 2100;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    padding: 10px 12px;
+    pointer-events: none;
+}
+
+.notification-banner {
+    pointer-events: auto;
+    background: #fff3cd;
+    border: 1px solid #ffecb5;
+    border-radius: 8px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+    padding: 8px 14px;
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    cursor: pointer;
+    font-size: 0.9rem;
+    color: #664d03;
+    max-width: 900px;
+    width: 100%;
+}
+
+.notification-banner .notification-text {
+    flex-grow: 1;
+    word-break: break-word;
+}
+
+.notification-banner .notification-close {
+    background: none;
+    border: none;
+    color: #999;
+    cursor: pointer;
+    padding: 0;
+    line-height: 1;
+    flex-shrink: 0;
+}
+
+.notification-banner .notification-close:hover { color: #333; }
+
+/* Баннер блокировки по расписанию */
+.restriction-banner {
+    background: #f8d7da;
+    border: 1px solid #f5c2c7;
+    color: #842029;
+    border-radius: 8px;
+    margin: 12px;
+    padding: 12px 16px;
+    font-size: 0.95rem;
+}
+
+/* Админка: строки расписания и уведомлений */
+.schedule-item {
+    background: #f8f9fa;
+    border: 1px solid #e9ecef;
+    border-radius: 6px;
+    padding: 8px 10px;
+}
+
+.notification-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    background: #f8f9fa;
+    border: 1px solid #e9ecef;
+    border-radius: 6px;
+    padding: 6px 10px;
+}
+
+/* Админка: сообщения от пользователей */
+.admin-message-item {
+    background: #f8f9fa;
+    border: 1px solid #e9ecef;
+    border-left: 3px solid #dc3545;
+    border-radius: 6px;
+    padding: 8px 10px;
+}
+
+.admin-message-item.read {
+    border-left-color: #dee2e6;
+    opacity: 0.75;
+}

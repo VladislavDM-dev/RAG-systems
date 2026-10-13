@@ -5,7 +5,8 @@ from flask import Blueprint, render_template, request, jsonify, Response, curren
 from flask_login import login_required, current_user
 
 from extensions import db, csrf
-from models import Conversation, Message, Favorite
+from models import Conversation, Message, Favorite, Notification, NotificationDismissed, AdminMessage
+from schedule import get_restriction_message
 
 chat = Blueprint("chat", __name__)
 
@@ -20,6 +21,10 @@ def index():
 @login_required
 @csrf.exempt
 def api_chat_stream():
+    block = get_restriction_message(current_user)
+    if block:
+        return jsonify({"error": block, "restricted": True}), 403
+
     data = request.get_json(silent=True) or {}
     prompt = (data.get("prompt") or "").strip()
     if not prompt:
@@ -374,7 +379,77 @@ def api_favorites_delete(fid):
 @chat.route("/api/status", methods=["GET"])
 @login_required
 def api_status():
-    return jsonify(current_app.rag.index_status())
+    data = current_app.rag.index_status()
+    block = get_restriction_message(current_user)
+    data["restricted"] = bool(block)
+    data["restriction_message"] = block or ""
+    return jsonify(data)
+
+
+@chat.route("/api/notifications", methods=["GET"])
+@login_required
+def api_notifications():
+    dismissed = {
+        d.notification_id
+        for d in NotificationDismissed.query.filter_by(user_id=current_user.id)
+    }
+    items = [
+        n.to_dict()
+        for n in Notification.query.order_by(Notification.created_at.desc()).all()
+        if n.id not in dismissed
+    ]
+    return jsonify({"notifications": items})
+
+
+@chat.route("/api/notifications/<int:nid>/dismiss", methods=["POST"])
+@login_required
+@csrf.exempt
+def api_notification_dismiss(nid):
+    item = db.session.get(Notification, nid)
+    if item is None:
+        return jsonify({"error": "Уведомление не найдено"}), 404
+    existing = NotificationDismissed.query.filter_by(
+        user_id=current_user.id, notification_id=nid
+    ).first()
+    if existing is None:
+        db.session.add(NotificationDismissed(user_id=current_user.id, notification_id=nid))
+        db.session.commit()
+    return jsonify({"ok": True})
+
+
+@chat.route("/api/feedback", methods=["POST"])
+@login_required
+@csrf.exempt
+def api_feedback():
+    """Сообщение пользователя администратору (об ошибке / обратная связь)."""
+    data = request.get_json(silent=True) or {}
+    text = (data.get("text") or "").strip()
+    if not text:
+        return jsonify({"error": "Текст сообщения пуст"}), 400
+    if len(text) > 2000:
+        return jsonify({"error": "Сообщение слишком длинное (макс. 2000 символов)"}), 400
+    db.session.add(AdminMessage(user_id=current_user.id, text=text))
+    db.session.commit()
+    return jsonify({"ok": True})
+
+
+@chat.route("/api/password", methods=["POST"])
+@login_required
+@csrf.exempt
+def api_password_change():
+    """Смена собственного пароля (для любого вошедшего пользователя)."""
+    data = request.get_json(silent=True) or {}
+    current = data.get("current_password") or ""
+    new = data.get("new_password") or ""
+    if not current_user.check_password(current):
+        return jsonify({"error": "Текущий пароль неверен"}), 400
+    if len(new) < 6:
+        return jsonify({"error": "Новый пароль должен быть не короче 6 символов"}), 400
+    if new == current:
+        return jsonify({"error": "Новый пароль совпадает с текущим"}), 400
+    current_user.set_password(new)
+    db.session.commit()
+    return jsonify({"ok": True})
 
 
 @chat.route("/api/parse", methods=["POST"])

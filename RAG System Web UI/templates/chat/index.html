@@ -29,6 +29,14 @@
         <span class="navbar-brand mb-0 h5"><i class="bi bi-journal-bookmark-fill me-2"></i>База знаний</span>
         <div class="ms-auto d-flex align-items-center">
             <span class="me-3 text-muted"><i class="bi bi-person-circle me-1"></i>{{ user.username }}</span>
+            <button class="btn btn-outline-secondary btn-sm me-2" title="Сообщить администратору об ошибке"
+                    data-bs-toggle="modal" data-bs-target="#feedbackModal">
+                <i class="bi bi-bug"></i>
+            </button>
+            <button class="btn btn-outline-secondary btn-sm me-2" title="Сменить пароль"
+                    data-bs-toggle="modal" data-bs-target="#passwordModal">
+                <i class="bi bi-key"></i>
+            </button>
             {% if user.is_admin %}
             <a href="{{ url_for('admin.admin_page') }}" class="btn btn-outline-primary btn-sm me-2" title="Админ-панель">
                 <i class="bi bi-gear"></i> Админ
@@ -42,6 +50,12 @@
             </form>
         </div>
     </nav>
+
+    <!-- Уведомления администратора (скрываются по клику/крестику) -->
+    <div id="notifications-container"></div>
+
+    <!-- Баннер блокировки по расписанию -->
+    <div id="restriction-banner" class="restriction-banner d-none"></div>
 
     <!-- Основной контейнер чата -->
     <div class="chat-container">
@@ -140,6 +154,61 @@
         </div>
     </div>
 
+    <!-- Сообщение администратору об ошибке -->
+    <div class="modal fade" id="feedbackModal" tabindex="-1" aria-labelledby="feedbackModalLabel" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="feedbackModalLabel"><i class="bi bi-bug me-2"></i>Сообщить об ошибке</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Закрыть"></button>
+                </div>
+                <div class="modal-body">
+                    <label class="form-label">Опишите проблему или что пошло не так:</label>
+                    <textarea id="feedback-text" class="form-control" rows="4" maxlength="2000"
+                              placeholder="Что произошло, какие действия вы выполняли, текст ошибки..."></textarea>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                    <button type="button" id="feedback-send-btn" class="btn btn-primary">
+                        <i class="bi bi-send me-1"></i>Отправить администратору
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Смена пароля -->
+    <div class="modal fade" id="passwordModal" tabindex="-1" aria-labelledby="passwordModalLabel" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="passwordModalLabel"><i class="bi bi-key me-2"></i>Смена пароля</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Закрыть"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label" for="password-current">Текущий пароль</label>
+                        <input type="password" id="password-current" class="form-control" autocomplete="current-password">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label" for="password-new">Новый пароль</label>
+                        <input type="password" id="password-new" class="form-control" autocomplete="new-password">
+                    </div>
+                    <div class="mb-0">
+                        <label class="form-label" for="password-confirm">Повторите новый пароль</label>
+                        <input type="password" id="password-confirm" class="form-control" autocomplete="new-password">
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                    <button type="button" id="password-save-btn" class="btn btn-primary">
+                        <i class="bi bi-check-lg me-1"></i>Сменить пароль
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <script src="{{ url_for('static', filename='js/bootstrap.bundle.min.js') }}"></script>
     <script src="{{ url_for('static', filename='js/marked.min.js') }}"></script>
     <script src="{{ url_for('static', filename='js/dompurify.min.js') }}"></script>
@@ -148,6 +217,7 @@
     <script src="{{ url_for('static', filename='js/chat.js') }}?v={{ config['MEMO_JS_VERSION'] }}"></script>
     <script src="{{ url_for('static', filename='js/sync.js') }}?v={{ config['MEMO_JS_VERSION'] }}"></script>
     <script src="{{ url_for('static', filename='js/memo.js') }}?v={{ config['MEMO_JS_VERSION'] }}"></script>
+    <script src="{{ url_for('static', filename='js/notifications.js') }}?v={{ config['MEMO_JS_VERSION'] }}"></script>
     <script src="{{ url_for('static', filename='js/app.js') }}?v={{ config['MEMO_JS_VERSION'] }}"></script>
 
 </body>

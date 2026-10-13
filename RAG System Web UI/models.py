@@ -122,32 +122,6 @@ class MemoState(db.Model):
         return json.loads(self.state_json) if self.state_json else {}
 
 
-class UsageRestriction(db.Model):
-    """Ограничение доступа по расписанию: дни недели + диапазон времени + текст блокировки."""
-
-    __tablename__ = "usage_restrictions"
-
-    id = db.Column(db.Integer, primary_key=True)
-    days_json = db.Column(db.Text, nullable=False, default="[]")  # [0..6], 0=Пн (datetime.weekday)
-    start_time = db.Column(db.String(5), nullable=False)  # "HH:MM"
-    end_time = db.Column(db.String(5), nullable=False)    # "HH:MM"; start == end → весь день
-    message = db.Column(db.Text, nullable=False, default="")  # общий текст блокировки
-    active = db.Column(db.Boolean, nullable=False, default=True)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-
-    def to_dict(self):
-        import json
-        return {
-            "id": self.id,
-            "days": json.loads(self.days_json) if self.days_json else [],
-            "start_time": self.start_time,
-            "end_time": self.end_time,
-            "message": self.message,
-            "active": bool(self.active),
-            "created_at": self.created_at.isoformat() if self.created_at else None,
-        }
-
-
 class Notification(db.Model):
     """Уведомление администратора для пользователей (показывается сверху)."""
 

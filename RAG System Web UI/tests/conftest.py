@@ -22,6 +22,7 @@ class FakeRAG(RAGClient):
 
     def __init__(self):
         super().__init__("http://127.0.0.1:1/rag", timeout=1)
+        self._schedule = []
 
     def index_status(self):
         return {"is_syncing": False, "initialized": True, "status": "ok", "progress": 100}
@@ -50,6 +51,77 @@ class FakeRAG(RAGClient):
 
     def memos(self, prompt, temperature=0.2, page_size=30, max_pages=15):
         return {"ok": True, "total": 0, "documents": []}
+
+    # --- Расписание (эмуляция ядра /rag/schedule) ---
+
+    def get_schedule(self):
+        from datetime import datetime
+        now = datetime.now()
+        items = []
+        for r in self._schedule:
+            applies = bool(r.get("active")) and now.weekday() in (r.get("days") or [])
+            if applies:
+                s, e = r.get("start_time"), r.get("end_time")
+                if s != e:
+                    cur = now.strftime("%H:%M")
+                    applies = (s <= cur < e) if s < e else (cur >= s or cur < e)
+            items.append({**r, "applies_now": applies})
+        return {
+            "server_time": now.isoformat(timespec="seconds"),
+            "server_time_hm": now.strftime("%H:%M"),
+            "weekday": now.weekday(),
+            "restrictions": items,
+        }
+
+    def _schedule_validate(self, data, partial=False):
+        import re
+        time_re = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)$")
+        values = {}
+        if not partial or "days" in data:
+            days = data.get("days")
+            if (not isinstance(days, list) or not days
+                    or not all(isinstance(d, int) and not isinstance(d, bool) and 0 <= d <= 6 for d in days)):
+                return None, "Поле 'days' — непустой список чисел 0..6 (0=Пн)"
+            values["days"] = sorted(set(days))
+        for field in ("start_time", "end_time"):
+            if not partial or field in data:
+                val = (data.get(field) or "").strip()
+                if not time_re.match(val):
+                    return None, f"Поле '{field}' — время в формате HH:MM"
+                values[field] = val
+        if not partial or "message" in data:
+            msg = (data.get("message") or "").strip()
+            if not msg:
+                return None, "Поле 'message' обязательно — текст блокировки для пользователя"
+            values["message"] = msg
+        if "active" in data:
+            values["active"] = bool(data.get("active"))
+        return values, None
+
+    def add_schedule(self, data):
+        values, error = self._schedule_validate(data)
+        if error:
+            return {"error": error}
+        rid = max((r["id"] for r in self._schedule), default=0) + 1
+        self._schedule.append({"id": rid, "active": True, **values})
+        return {"ok": True, **self.get_schedule()}
+
+    def update_schedule(self, rid, data):
+        values, error = self._schedule_validate(data, partial=True)
+        if error:
+            return {"error": error}
+        for r in self._schedule:
+            if r["id"] == rid:
+                r.update(values)
+                return {"ok": True, **self.get_schedule()}
+        return {"error": "Ограничение не найдено"}
+
+    def delete_schedule(self, rid):
+        n = len(self._schedule)
+        self._schedule = [r for r in self._schedule if r["id"] != rid]
+        if len(self._schedule) == n:
+            return {"error": "Ограничение не найдено"}
+        return {"ok": True, **self.get_schedule()}
 
 
 def _csrf_token(client):

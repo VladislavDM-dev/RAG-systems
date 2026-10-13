@@ -1,12 +1,9 @@
 """Blueprint: админ-панель."""
-import json
-
 from flask import Blueprint, render_template, request, jsonify, current_app
 from flask_login import login_required, current_user
 
 from extensions import db, csrf
-from models import User, UsageRestriction, Notification, AdminMessage
-from schedule import TIME_RE
+from models import User, Notification, AdminMessage
 
 admin = Blueprint("admin", __name__)
 
@@ -222,40 +219,18 @@ def api_users_set_password(uid):
 
 
 def _schedule_list():
-    items = UsageRestriction.query.order_by(UsageRestriction.id).all()
-    return {"restrictions": [r.to_dict() for r in items]}
-
-
-def _parse_schedule_payload(data, partial=False):
-    """Валидация payload расписания. Возвращает (values, error)."""
-    values = {}
-    if not partial or "days" in data:
-        days = data.get("days")
-        if (not isinstance(days, list) or not days
-                or not all(isinstance(d, int) and not isinstance(d, bool) and 0 <= d <= 6 for d in days)):
-            return None, "Поле 'days' — непустой список чисел 0..6 (0=Пн)"
-        values["days_json"] = json.dumps(sorted(set(days)))
-    for field in ("start_time", "end_time"):
-        if not partial or field in data:
-            val = (data.get(field) or "").strip()
-            if not TIME_RE.match(val):
-                return None, f"Поле '{field}' — время в формате HH:MM"
-            values[field] = val
-    if not partial or "message" in data:
-        msg = (data.get("message") or "").strip()
-        if not msg:
-            return None, "Поле 'message' обязательно — текст блокировки для пользователя"
-        values["message"] = msg
-    if "active" in data:
-        values["active"] = bool(data.get("active"))
-    return values, None
+    """Расписание запрета живёт на ядре; Web UI только проксирует."""
+    result = current_app.rag.get_schedule()
+    if result.get("error"):
+        return jsonify({"error": "Ядро недоступно: " + result["error"]}), 502
+    return jsonify(result)
 
 
 @admin.route("/api/admin/schedule", methods=["GET"])
 @login_required
 @admin_required
 def api_schedule_list():
-    return jsonify(_schedule_list())
+    return _schedule_list()
 
 
 @admin.route("/api/admin/schedule", methods=["POST"])
@@ -264,19 +239,10 @@ def api_schedule_list():
 @csrf.exempt
 def api_schedule_add():
     data = request.get_json(silent=True) or {}
-    values, error = _parse_schedule_payload(data)
-    if error:
-        return jsonify({"error": error}), 400
-    item = UsageRestriction(
-        days_json=values["days_json"],
-        start_time=values["start_time"],
-        end_time=values["end_time"],
-        message=values["message"],
-        active=values.get("active", True),
-    )
-    db.session.add(item)
-    db.session.commit()
-    return jsonify({"ok": True, **_schedule_list()})
+    result = current_app.rag.add_schedule(data)
+    if result.get("error"):
+        return jsonify(result), 400
+    return jsonify(result)
 
 
 @admin.route("/api/admin/schedule/<int:rid>", methods=["PUT"])
@@ -284,22 +250,14 @@ def api_schedule_add():
 @admin_required
 @csrf.exempt
 def api_schedule_update(rid):
-    item = db.session.get(UsageRestriction, rid)
-    if item is None:
-        return jsonify({"error": "Ограничение не найдено"}), 404
     data = request.get_json(silent=True) or {}
     if not data:
         return jsonify({"error": "Пустой запрос"}), 400
-    values, error = _parse_schedule_payload(data, partial=True)
-    if error:
-        return jsonify({"error": error}), 400
-    if "days_json" in values:
-        item.days_json = values["days_json"]
-    for field in ("start_time", "end_time", "message", "active"):
-        if field in values:
-            setattr(item, field, values[field])
-    db.session.commit()
-    return jsonify({"ok": True, **_schedule_list()})
+    result = current_app.rag.update_schedule(rid, data)
+    if result.get("error"):
+        code = 404 if "не найдено" in result["error"] else 400
+        return jsonify(result), code
+    return jsonify(result)
 
 
 @admin.route("/api/admin/schedule/<int:rid>", methods=["DELETE"])
@@ -307,12 +265,10 @@ def api_schedule_update(rid):
 @admin_required
 @csrf.exempt
 def api_schedule_delete(rid):
-    item = db.session.get(UsageRestriction, rid)
-    if item is None:
-        return jsonify({"error": "Ограничение не найдено"}), 404
-    db.session.delete(item)
-    db.session.commit()
-    return jsonify({"ok": True, **_schedule_list()})
+    result = current_app.rag.delete_schedule(rid)
+    if result.get("error"):
+        return jsonify(result), 404
+    return jsonify(result)
 
 
 def _notification_list():

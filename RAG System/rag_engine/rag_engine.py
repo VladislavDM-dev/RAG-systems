@@ -142,7 +142,7 @@ class _ExcludeNodeIdsPostprocessor(BaseNodePostprocessor):
 class RAGEngine:
     """RAG-движок: индексация документов и поиск по ним."""
 
-    VERSION = "26.09.22"
+    VERSION = "26.10.13"
 
     def __init__(self, config: Optional[Settings] = None):
         self.cfg = config or Settings()

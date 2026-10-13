@@ -4,6 +4,7 @@ import threading
 from flask import Flask, request, jsonify, Response
 
 from rag_engine.rag_engine import RAGEngine
+from rag_engine import schedule as sched
 
 app = Flask(__name__)
 engine = RAGEngine()
@@ -185,6 +186,61 @@ def reset_config():
     engine.cfg.save()
     engine.start_sync(is_remove=True)
     return jsonify({"ok": True, "config": engine.get_config()})
+
+
+# ---------------------------------------------------------------------------
+#  Расписание ограничений использования (единый источник — ядро)
+# ---------------------------------------------------------------------------
+@app.route(f"{API_PREFIX}/schedule", methods=["GET"])
+def get_schedule():
+    """Серверное время и список окон запрета (с applies_now)."""
+    return jsonify(sched.schedule_response(engine.cfg.usage_restrictions or []))
+
+
+@app.route(f"{API_PREFIX}/schedule", methods=["POST"])
+def add_schedule():
+    """Добавить ограничение: {days:[0..6], start_time, end_time, message, active?}."""
+    data = request.get_json(silent=True) or {}
+    values, error = sched.validate_payload(data)
+    if error:
+        return jsonify({"error": error}), 400
+    items = list(engine.cfg.usage_restrictions or [])
+    item = {"id": sched.next_id(items), "active": True, **values}
+    items.append(item)
+    engine.cfg.usage_restrictions = items
+    engine.cfg.save()
+    return jsonify({"ok": True, **sched.schedule_response(items)})
+
+
+@app.route(f"{API_PREFIX}/schedule/<int:rid>", methods=["PUT"])
+def update_schedule(rid):
+    """Частичное обновление ограничения (days/start_time/end_time/message/active)."""
+    items = list(engine.cfg.usage_restrictions or [])
+    item = next((i for i in items if int(i.get("id") or 0) == rid), None)
+    if item is None:
+        return jsonify({"error": "Ограничение не найдено"}), 404
+    data = request.get_json(silent=True) or {}
+    if not data:
+        return jsonify({"error": "Пустой запрос"}), 400
+    values, error = sched.validate_payload(data, partial=True)
+    if error:
+        return jsonify({"error": error}), 400
+    item.update(values)
+    engine.cfg.usage_restrictions = items
+    engine.cfg.save()
+    return jsonify({"ok": True, **sched.schedule_response(items)})
+
+
+@app.route(f"{API_PREFIX}/schedule/<int:rid>", methods=["DELETE"])
+def delete_schedule(rid):
+    """Удалить ограничение по id."""
+    items = list(engine.cfg.usage_restrictions or [])
+    remaining = [i for i in items if int(i.get("id") or 0) != rid]
+    if len(remaining) == len(items):
+        return jsonify({"error": "Ограничение не найдено"}), 404
+    engine.cfg.usage_restrictions = remaining
+    engine.cfg.save()
+    return jsonify({"ok": True, **sched.schedule_response(remaining)})
 
 
 # ---------------------------------------------------------------------------

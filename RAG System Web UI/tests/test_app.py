@@ -670,3 +670,32 @@ def test_admin_messages_page_has_ui(logged_client):
     html = logged_client.get("/admin").get_data(as_text=True)
     assert "admin-messages-list" in html
     assert "adm-pass-current" in html
+
+
+# --- API расписания (дата/время сервера + окна запрета) ---
+
+def test_schedule_info_api(logged_client):
+    resp = logged_client.get("/api/schedule")
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["server_time"]
+    assert ":" in data["server_time_hm"]
+    assert 0 <= data["weekday"] <= 6
+    assert data["restrictions"] == []
+
+    resp = logged_client.post("/api/admin/schedule", json={
+        "days": _today_days(), "start_time": "00:00", "end_time": "00:00",
+        "message": "Тест",
+    })
+    assert resp.status_code == 200
+
+    resp = logged_client.get("/api/schedule")
+    data = resp.get_json()
+    assert len(data["restrictions"]) == 1
+    item = data["restrictions"][0]
+    assert item["applies_now"] is True
+    assert item["message"] == "Тест"
+    assert item["days"] == _today_days()
+    # админ не блокируется, но окно видит
+    assert data["restricted"] is False
+    assert data["restriction_message"] == ""

@@ -42,6 +42,9 @@ class Settings:
     # Папки для сканирования
     sync_folders: list = field(default_factory=list)
 
+    # Ограничения использования по расписанию (дни + диапазон времени + текст)
+    usage_restrictions: list = field(default_factory=list)
+
     def __post_init__(self) -> None:
         _config_path = config_dir() / "settings.json"
         if not _config_path.exists():

@@ -49,6 +49,20 @@ class RAGClient:
         params = {"reset": "true"} if reset else {}
         return self._request("post", "index", params=params)
 
+    # --- Расписание ограничений (источник — ядро) ---
+
+    def get_schedule(self) -> dict:
+        return self._request("get", "schedule")
+
+    def add_schedule(self, data: dict) -> dict:
+        return self._request("post", "schedule", json=data)
+
+    def update_schedule(self, rid: int, data: dict) -> dict:
+        return self._request("put", f"schedule/{rid}", json=data)
+
+    def delete_schedule(self, rid: int) -> dict:
+        return self._request("delete", f"schedule/{rid}")
+
     def get_config(self) -> dict:
         return self._get("config")
 

@@ -6,7 +6,7 @@ from flask_login import login_required, current_user
 
 from extensions import db, csrf
 from models import Conversation, Message, Favorite, Notification, NotificationDismissed, AdminMessage
-from schedule import get_restriction_message
+from schedule import get_restriction_message, DEFAULT_BLOCK_MESSAGE
 
 chat = Blueprint("chat", __name__)
 
@@ -381,6 +381,24 @@ def api_favorites_delete(fid):
 def api_status():
     data = current_app.rag.index_status()
     block = get_restriction_message(current_user)
+    data["restricted"] = bool(block)
+    data["restriction_message"] = block or ""
+    return jsonify(data)
+
+
+@chat.route("/api/schedule", methods=["GET"])
+@login_required
+def api_schedule_info():
+    """Дата/время сервера и окна запрета — данные ядра + флаг блокировки текущего пользователя."""
+    data = current_app.rag.get_schedule()
+    if data.get("error"):
+        return jsonify({"error": "Ядро недоступно: " + data["error"]}), 502
+    block = None
+    if not current_user.is_admin:
+        for r in data.get("restrictions") or []:
+            if r.get("active") and r.get("applies_now"):
+                block = (r.get("message") or "").strip() or DEFAULT_BLOCK_MESSAGE
+                break
     data["restricted"] = bool(block)
     data["restriction_message"] = block or ""
     return jsonify(data)

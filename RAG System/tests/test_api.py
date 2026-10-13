@@ -420,3 +420,80 @@ def test_agent_stream_emits_events(client, monkeypatch):
     assert calls["top_k"] == 5
     assert calls["temperature"] == 0.3
     assert calls["exclude_node_ids"] == ["n1", "n2"]
+
+# --- Расписание ограничений (usage schedule на ядре) ---
+
+def _schedule_clear(client):
+    for item in client.get("/rag/schedule").get_json()["restrictions"]:
+        client.delete(f"/rag/schedule/{item['id']}")
+
+
+def test_schedule_get_empty(client):
+    _schedule_clear(client)
+    r = client.get("/rag/schedule")
+    assert r.status_code == 200
+    data = r.get_json()
+    for key in ("server_time", "server_time_hm", "weekday", "restrictions"):
+        assert key in data
+    assert data["restrictions"] == []
+    assert 0 <= data["weekday"] <= 6
+
+
+def test_schedule_crud(client):
+    _schedule_clear(client)
+    r = client.post("/rag/schedule", json={
+        "days": [0, 1, 2, 3, 4], "start_time": "18:00", "end_time": "09:00",
+        "message": "После работы доступ закрыт",
+    })
+    assert r.status_code == 200
+    items = r.get_json()["restrictions"]
+    assert len(items) == 1
+    item = items[0]
+    assert item["message"] == "После работы доступ закрыт"
+    assert item["active"] is True
+    assert item["applies_now"] in (True, False)
+    rid = item["id"]
+
+    r = client.put(f"/rag/schedule/{rid}", json={"active": False})
+    assert r.status_code == 200
+    assert r.get_json()["restrictions"][0]["active"] is False
+    assert r.get_json()["restrictions"][0]["applies_now"] is False
+
+    r = client.put(f"/rag/schedule/{rid}", json={"message": "Новый текст"})
+    assert r.get_json()["restrictions"][0]["message"] == "Новый текст"
+
+    r = client.delete(f"/rag/schedule/{rid}")
+    assert r.status_code == 200
+    assert r.get_json()["restrictions"] == []
+
+
+def test_schedule_validation(client):
+    bad = [
+        {"days": [], "start_time": "10:00", "end_time": "11:00", "message": "x"},
+        {"days": [7], "start_time": "10:00", "end_time": "11:00", "message": "x"},
+        {"days": [0], "start_time": "25:00", "end_time": "11:00", "message": "x"},
+        {"days": [0], "start_time": "10:00", "end_time": "11:00", "message": "  "},
+    ]
+    for payload in bad:
+        r = client.post("/rag/schedule", json=payload)
+        assert r.status_code == 400, payload
+        assert "error" in r.get_json()
+
+
+def test_schedule_not_found(client):
+    r = client.put("/rag/schedule/99999", json={"active": False})
+    assert r.status_code == 404
+    r = client.delete("/rag/schedule/99999")
+    assert r.status_code == 404
+
+
+def test_schedule_full_day_applies(client):
+    from datetime import datetime
+    _schedule_clear(client)
+    r = client.post("/rag/schedule", json={
+        "days": [datetime.now().weekday()], "start_time": "00:00", "end_time": "00:00",
+        "message": "Обслуживание",
+    })
+    item = r.get_json()["restrictions"][0]
+    assert item["applies_now"] is True
+    _schedule_clear(client)

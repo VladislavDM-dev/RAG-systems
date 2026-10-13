@@ -24,7 +24,7 @@ def info():
     return jsonify({
         "service": "RAG System",
         "engine": "IndexDocuments RAGEngine",
-        "version": getattr(engine, "version", "26.06.25"),
+        "version": getattr(engine, "version", RAGEngine.VERSION),
         "provider": engine.cfg.provider,
         "initialized": engine.is_initialized,
         "syncing": engine.is_syncing,
@@ -47,7 +47,7 @@ def agent_stream():
     """Потоковое API для внешних агентов (SSE).
 
     Принимает агрегированный промпт агента и возвращает ответ LLM на основе
-    найденного в RAG контекста. События: token / sources / done / error.
+    найденного в RAG контекста. События: reasoning / token / sources / done / error.
 
     Тело запроса (JSON):
         prompt: str            — промпт/вопрос агента (обязательно)
@@ -84,6 +84,7 @@ def agent_stream():
             payload = {"type": event["type"], "data": event.get("data", "")}
             if event["type"] == "done":
                 payload["answer"] = event.get("answer", "")
+                payload["reasoning"] = event.get("reasoning", "")
                 payload["sources"] = event.get("sources", [])
                 payload["prompt"] = event.get("prompt", "")
             yield f"data: {__import__('json').dumps(payload, ensure_ascii=False)}\n\n"
@@ -245,13 +246,44 @@ def memos():
     result = engine.memos(
         prompt,
         temperature=data.get("temperature"),
-        page_size=data.get("page_size", 30),
+        page_size=data.get("page_size", 50),
         max_pages=data.get("max_pages", 15),
     )
     if result.get("error"):
         code = 503 if "синхронизац" in str(result["error"]).lower() or "не готов" in str(result["error"]).lower() else 500
         return jsonify(result), code
     return jsonify(result)
+
+
+@app.route(f"{API_PREFIX}/memos/stream", methods=["POST"])
+def memos_stream():
+    """Поиск служебных записок по теме с потоковым reasoning (SSE).
+
+    События: reasoning / done / error. В done — documents с полным текстом.
+    """
+    data = request.get_json(silent=True) or {}
+    prompt = (data.get("prompt") or "").strip()
+    if not prompt:
+        return jsonify({"error": "Поле 'prompt' обязательно"}), 400
+
+    def generate():
+        for event in engine.memos_stream(
+            prompt,
+            temperature=data.get("temperature"),
+            page_size=data.get("page_size", 50),
+            max_pages=data.get("max_pages", 15),
+        ):
+            payload = {"type": event["type"], "data": event.get("data", "")}
+            if event["type"] == "done":
+                payload["documents"] = event.get("documents", [])
+                payload["pages"] = event.get("pages", 0)
+                payload["prompt"] = event.get("prompt", "")
+                payload["tokens_in"] = event.get("tokens_in")
+                payload["tokens_out"] = event.get("tokens_out")
+                payload["elapsed"] = event.get("elapsed")
+            yield f"data: {__import__('json').dumps(payload, ensure_ascii=False)}\n\n"
+
+    return Response(generate(), mimetype="text/event-stream")
 
 
 @app.route(f"{API_PREFIX}/parse", methods=["POST"])

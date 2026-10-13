@@ -118,10 +118,10 @@ const MemoWizard = {
         if (this.step === 'topic') {
             this.topic = text;
             await this.offerVariants();
-        } else if (this.step === 'fields') {
-            this.sendBot('Заполните поля выше и нажмите «Далее».');
+} else if (this.step === 'fields') {
+            this.sendBot('Заполните поля выше и нажмите «Далее». Обычный запрос сейчас не будет отправлен — чтобы выйти из мастера, напишите `/cancel` или `/new`.');
         } else if (this.step === 'check') {
-            this.sendBot('Нажмите кнопку «Скачать .docx и сохранить» ниже.');
+            this.sendBot('Нажмите кнопку «Скачать .docx и сохранить» ниже. Чтобы выйти из мастера, напишите `/cancel` или `/new`.');
         }
     },
 

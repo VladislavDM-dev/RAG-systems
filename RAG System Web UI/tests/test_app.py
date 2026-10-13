@@ -208,6 +208,56 @@ def test_memos_renders_documents(logged_client):
     assert not done.get("sources")
 
 
+class ReasoningMemosRAG:
+    """Имитирует потоковый /memos/stream ядра: reasoning-события + done."""
+
+    def __init__(self):
+        self.memos_stream_called = False
+
+    def memos_stream(self, prompt, temperature=0.2, page_size=30, max_pages=15):
+        self.memos_stream_called = True
+        yield {"type": "reasoning", "data": "Батч 1: ищу упоминания канцтоваров"}
+        yield {"type": "reasoning", "data": "Батч 2: пути #10 и #27 подходят"}
+        yield {
+            "type": "done",
+            "documents": [
+                {
+                    "file_name": "#10-2026.02.03-О закупке канцелярских принадлежностей.docx",
+                    "file_path": "C:\\out\\#10-2026.02.03.docx",
+                    "text": "Служебная записка №10 от 03.02.2026\nТекст первой записки.",
+                },
+            ],
+            "pages": 1,
+            "tokens_in": 1520,
+            "tokens_out": 84,
+            "elapsed": 4.25,
+        }
+
+
+def test_memos_streams_reasoning(logged_client):
+    """Потоковая ветка /memos: reasoning пробрасывается, финал — done."""
+    import app as app_module
+    stub = ReasoningMemosRAG()
+    app_module.app.rag = stub
+
+    resp = logged_client.post("/api/chat/stream", json={
+        "prompt": "/memos канцтовары", "memos_paged": True,
+    })
+    assert resp.status_code == 200
+    events = _parse_sse(resp)
+    assert stub.memos_stream_called
+    reasons = [(e["data"] if isinstance(e["data"], str) else "") for e in events if e["type"] == "reasoning"]
+    assert reasons == ["Батч 1: ищу упоминания канцтоваров", "Батч 2: пути #10 и #27 подходят"]
+    done = next(e for e in events if e["type"] == "done")
+    assert "#10-2026.02.03" in done["answer"]
+    assert done.get("reasoning") == "Батч 1: ищу упоминания канцтоваровБатч 2: пути #10 и #27 подходят"
+    assert "Итого записок по теме: 1" in done["answer"]
+    assert done.get("documents") and done["documents"][0]["file_name"].startswith("#10")
+    assert done.get("tokens_in") == 1520
+    assert done.get("tokens_out") == 84
+    assert done.get("elapsed") == 4.25
+
+
 def test_memos_empty(logged_client):
     import app as app_module
     app_module.app.rag = ScriptedMemosRAG(documents=[])
@@ -278,6 +328,40 @@ def test_memos_not_auto_with_explicit_system_prompt(logged_client):
     events = _parse_sse(resp)
     assert any(e["type"] == "error" for e in events)
     assert not any(e["type"] == "done" for e in events)
+
+
+# --- Потоковый вывод reasoning (размышления) ---
+
+class ReasoningRAG:
+    """Эмулирует ядро, возвращающее размышления модели + текст."""
+
+    def __init__(self):
+        self.memos_called = False
+
+    def memos(self, prompt, temperature=0.2, page_size=30, max_pages=15):
+        self.memos_called = True
+        return {"ok": True, "total": 0, "documents": []}
+
+    def stream_chat(self, prompt, **kwargs):
+        yield {"type": "reasoning", "data": "Хм"}
+        yield {"type": "reasoning", "data": ", подумаем."}
+        yield {"type": "token", "data": "Ответ."}
+        yield {"type": "done", "answer": "Ответ.",
+               "reasoning": "Хм, подумаем.", "sources": [], "prompt": prompt}
+
+
+def test_reasoning_streamed_and_merged_in_done(logged_client):
+    import app as app_module
+    app_module.app.rag = ReasoningRAG()
+    resp = logged_client.post("/api/chat/stream", json={
+        "prompt": "объясни простыми словами",
+    })
+    events = _parse_sse(resp)
+    reasoning_events = [e["data"] for e in events if e["type"] == "reasoning"]
+    assert reasoning_events == ["Хм", ", подумаем."]
+    done = next(e for e in events if e["type"] == "done")
+    assert done["reasoning"] == "Хм, подумаем."
+    assert done["answer"] == "Ответ."
 
 
 # --- Админка ---

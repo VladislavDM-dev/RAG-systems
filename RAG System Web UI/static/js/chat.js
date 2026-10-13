@@ -8,6 +8,7 @@ const Chat = {
     COMMANDS: [
         { cmd: '/create', desc: 'Служебная записка по теме: /create тема' },
         { cmd: '/memos', desc: 'Список служебных записок: /memos тема' },
+        { cmd: '/cancel', desc: 'Отменить создание записки (выход из мастера)' },
         { cmd: '/new', desc: 'Начать новый диалог' },
         { cmd: '/clear', desc: 'Очистить всю историю диалогов и ответов' },
         { cmd: '/help', desc: 'Показать список команд' },
@@ -91,10 +92,17 @@ unlockInputs(unlock) {
             bubbleDiv.appendChild(saveBtn);
         }
 
-        const sourcesDiv = document.createElement('div');
+const sourcesDiv = document.createElement('div');
         sourcesDiv.className = 'sources-list';
         sourcesDiv.style.display = 'none';
         bubbleDiv.appendChild(sourcesDiv);
+
+        const reasoningBlock = document.createElement('details');
+        reasoningBlock.className = 'reasoning-block';
+        reasoningBlock.style.display = 'none';
+        reasoningBlock.innerHTML = '<summary>Размышления</summary><div class="reasoning-content"></div>';
+        bubbleDiv.appendChild(reasoningBlock);
+        const reasoningContent = reasoningBlock.querySelector('.reasoning-content');
 
         rowDiv.appendChild(bubbleDiv);
         this.chatContainer.appendChild(rowDiv);
@@ -119,6 +127,17 @@ unlockInputs(unlock) {
                 renderContent(pureText);
                 const cc = document.getElementById('chat-container');
                 if (cc) cc.scrollTop = cc.scrollHeight;
+            },
+            appendReasoning: function(txt) {
+                reasoningBlock.style.display = 'block';
+                reasoningContent.appendChild(document.createTextNode(txt || ''));
+                const cc = document.getElementById('chat-container');
+                if (cc) cc.scrollTop = cc.scrollHeight;
+            },
+            setReasoning: function(txt) {
+                if (!txt) return;
+                reasoningBlock.style.display = 'block';
+                reasoningContent.textContent = txt;
             },
             showSources: function(list) {
                 if (!list || list.length === 0) return;
@@ -155,6 +174,25 @@ sourcesDiv.querySelectorAll('.source-file-btn').forEach(btn => {
             },
             removeDots: function() {
                 contentDiv.classList.remove('typing-indicator');
+            },
+            setMetrics: function(data) {
+                if (!data) return;
+                const tokIn = data.tokens_in;
+                const tokOut = data.tokens_out;
+                const el = data.elapsed;
+                if (tokIn == null && tokOut == null && el == null) return;
+                let parts = [];
+                if (tokOut != null) parts.push(tokOut + ' ток.');
+                if (tokIn != null) parts.push('вход ' + tokIn + '');
+                if (el != null) parts.push(el.toFixed ? el.toFixed(1) + ' с' : el + ' с');
+                if (!parts.length) return;
+                let meta = bubbleDiv.querySelector('.response-meta');
+                if (!meta) {
+                    meta = document.createElement('div');
+                    meta.className = 'response-meta subtle-muted small mt-1';
+                    bubbleDiv.appendChild(meta);
+                }
+                meta.textContent = '⚡ ' + parts.join(' · ');
             }
         };
     },
@@ -220,6 +258,16 @@ sourcesDiv.querySelectorAll('.source-file-btn').forEach(btn => {
         if (low === '/help') { this.questionInput.value = ''; this.showCommandsHelp(); return; }
         if (low === '/new') { this.questionInput.value = ''; this.startNewChat(); return; }
         if (low === '/clear') { this.questionInput.value = ''; History.clearAll(); return; }
+        if (low === '/cancel') {
+            this.questionInput.value = '';
+            if (typeof MemoWizard !== 'undefined' && MemoWizard.isActive()) {
+                MemoWizard.reset();
+                this.appendMessage('Создание записки отменено.', false);
+            } else {
+                this.appendMessage('Сейчас нет активного мастера (' + this.COMMANDS.filter(c => c.cmd === '/create')[0].desc + ').', false);
+            }
+            return;
+        }
         if (low.startsWith('/create')) { this.questionInput.value = ''; MemoWizard.start(text); return; }
         if (low.startsWith('/memos')) { this.questionInput.value = ''; this.sendMemosQuery(text); return; }
         if (typeof MemoWizard !== 'undefined' && MemoWizard.isActive()) {
@@ -263,8 +311,12 @@ try {
             if (options.top_k) body.top_k = options.top_k;
             if (options.temperature != null) body.temperature = options.temperature;
             if (options.memos_paged) body.memos_paged = true;
-            await streamSSE('/api/chat/stream', body, {
+await streamSSE('/api/chat/stream', body, {
                 onSources: (s) => { sourcesData = s; },
+                onReasoning: (r) => {
+                    if (fullAnswer === '') botMsg.removeDots();
+                    botMsg.appendReasoning(r);
+                },
                 onToken: (t) => {
                     if (fullAnswer === '') botMsg.removeDots();
                     fullAnswer += t;
@@ -277,10 +329,18 @@ onDone: async (data) => {
                         botMsg.removeDots();
                         botMsg.updateText(fullAnswer);
                     }
-                    const sources = data.sources || sourcesData;
-                    botMsg.showSources(sources);
+                    if (data.reasoning) botMsg.setReasoning(data.reasoning);
+                    if (data.documents && data.documents.length) {
+                        fullAnswer = fullAnswer || data.answer || '';
+                        botMsg.updateText(this.memoListHtml(data.documents, question));
+                        sourcesData = data.documents.map(d => ({ file_name: d.file_name, file_path: d.file_path }));
+                    } else {
+                        const sources = data.sources || sourcesData;
+                        botMsg.showSources(sources);
+                    }
                     botMsg.removeDots();
-                    await this.saveMessage(question, fullAnswer, sources);
+                    botMsg.setMetrics(data);
+                    await this.saveMessage(question, fullAnswer, sourcesData, { memoList: data.documents || null });
                 },
                 onError: (e) => {
                     botMsg.removeDots();
@@ -304,13 +364,18 @@ memoListHtml(memos, questionLabel) {
         const memosArr = Array.isArray(memos) ? memos : [];
         const items = memosArr.map(m => {
             const title = (m.file_name || '').replace(/\.docx$/i, '');
-            const body = (m.text || '').trim();
+            const body = (m.text || '').trim() || '_Документ пуст._';
             const path = m.file_path || '';
-            return '<li>' + escapeHtml(title) +
-                '<div class="memo-meta"><span class="memo-path">' + escapeHtml(path) + '</span>' +
+            return '<li>' +
+                '<details class="memo-item">' +
+                '<summary class="memo-item-summary"><span class="memo-item-title">' + escapeHtml(title) + '</span>' +
+                '<span class="memo-item-badge">' + escapeHtml(path) + '</span></summary>' +
+                '<div class="memo-meta">' +
                 '<button type="button" class="btn btn-sm btn-outline-secondary memo-copy" data-path="' + escapeHtml(path) + '">Скопировать путь</button>' +
-                '<button type="button" class="btn btn-sm btn-outline-primary memo-fav" data-title="' + escapeHtml(title) + '" data-path="' + escapeHtml(path) + '">Сохр. в избранное</button></div>' +
-                '<div class="memo-list-body">' + escapeHtml(body) + '</div></li>';
+                '<button type="button" class="btn btn-sm btn-outline-primary memo-fav" data-title="' + escapeHtml(title) + '" data-path="' + escapeHtml(path) + '">Сохр. в избранное</button>' +
+                '</div>' +
+                '<div class="memo-list-body">' + escapeHtml(body) + '</div>' +
+                '</details></li>';
         }).join('\n');
         return '<div class="memo-list"><h6><b>Служебные записки по запросу "' + (questionLabel || '') + '" (' + memosArr.length + '):</b></h6><ol>' + items + '</ol></div>';
     },
@@ -425,6 +490,9 @@ memoListHtml(memos, questionLabel) {
     },
 
     clearChat() {
+        if (typeof MemoWizard !== 'undefined' && MemoWizard.isActive()) {
+            MemoWizard.reset();
+        }
         this.chatContainer.innerHTML = '';
         History.activeConversationId = null;
         this.last_question = '';

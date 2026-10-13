@@ -7,7 +7,7 @@ import requests
 
 
 class RAGClient:
-    def __init__(self, base_url: str, timeout: int = 30):
+    def __init__(self, base_url: str, timeout: int = 60):
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
 
@@ -88,7 +88,7 @@ class RAGClient:
         try:
             resp = requests.post(
                 f"{self.base_url}/agent/stream",
-                json=payload, stream=True, timeout=(5, 120),
+                json=payload, stream=True, timeout=(10, 600),
             )
             if resp.status_code >= 400:
                 try:
@@ -123,7 +123,7 @@ class RAGClient:
         return self._request("post", "parse", json={"file_path": file_path})
 
     def memos(self, prompt: str, temperature: float = 0.2,
-              page_size: int = 30, max_pages: int = 15) -> dict:
+              page_size: int = 50, max_pages: int = 15) -> dict:
         """Поиск всех записок по теме (ядро отдаёт полный текст документов)."""
         return self._request(
             "post",
@@ -134,14 +134,50 @@ class RAGClient:
                 "page_size": page_size,
                 "max_pages": max_pages,
             },
-            timeout=600,
+            timeout=900,
         )
+
+    def memos_stream(self, prompt: str, temperature: float = 0.2,
+                     page_size: int = 50, max_pages: int = 15) -> Iterator[dict]:
+        """Поиск записок по теме с потоковым reasoning (SSE).
+
+        События: reasoning / done (documents) / error.
+        """
+        payload = {
+            "prompt": prompt,
+            "temperature": temperature,
+            "page_size": page_size,
+            "max_pages": max_pages,
+        }
+        try:
+            resp = requests.post(
+                f"{self.base_url}/memos/stream",
+                json=payload, stream=True, timeout=(10, 900),
+            )
+            if resp.status_code >= 400:
+                try:
+                    err = resp.json()
+                    yield {"type": "error", "data": err.get("error", f"HTTP {resp.status_code}")}
+                except Exception:
+                    yield {"type": "error", "data": f"HTTP {resp.status_code}"}
+                return
+
+            buffer = b""
+            for chunk in resp.iter_content(chunk_size=4096):
+                buffer += chunk
+                while b"\n\n" in buffer:
+                    line, buffer = buffer.split(b"\n\n", 1)
+                    yield self._parse_sse_line(line)
+            if buffer.strip():
+                yield self._parse_sse_line(buffer)
+        except requests.RequestException as e:
+            yield {"type": "error", "data": str(e)}
 
     def parse_file_stream(self, file_path: str) -> Iterator[dict]:
         try:
             resp = requests.post(
                 f"{self.base_url}/parse/stream",
-                json={"file_path": file_path}, stream=True, timeout=(5, 120),
+                json={"file_path": file_path}, stream=True, timeout=(10, 600),
             )
             buffer = b""
             for chunk in resp.iter_content(chunk_size=4096):

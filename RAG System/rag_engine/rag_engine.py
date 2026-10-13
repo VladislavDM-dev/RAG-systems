@@ -39,12 +39,85 @@ _MEMO_BATCH_SYSTEM_PROMPT = (
     "служебные записки, релевантные теме, среди приведённых фрагментов "
     "документов (это батч №{page_no}). Каждый фрагмент помечен строкой "
     "[Файл: <полный путь>]. Ранее уже были найдены файлы: {previously}. "
-    "Выведи ТОЛЬКО полные пути (из меток [Файл: ...]) записок, релевантных "
-    "теме, которых ещё не было в списке ранее найденных. Явно не выдумывай "
-    "пути — бери их строго из меток фрагментов. Формат ответа, по одному пути "
-    "на строку:\nПУТЬ: <полный путь>\nЕсли в этом батче нет новых релевантных "
-    "записок — ответь ровно: НОВЫХ ЗАПИСОК НЕТ"
+    "Работай кратко и по делу, не размышляй вслух — LLM-поток отдельный: "
+    "в этой генерации выводи ТОЛЬКО итоговый список. Выведи лишь полные пути "
+    "(из меток [Файл: ...]) записок, релевантных теме, которых ещё не было "
+    "в списке ранее найденных. НЕ описывай ход проверки, НЕ комментируй каждый "
+    "фрагмент, НЕ повторяй пути, НЕ перечисляй нерелевантные — сразу ответь "
+    "списком, по одному пути на строку:\nПУТЬ: <полный путь>\n"
+    "Если в этом батче нет новых релевантных записок — ответь ровно: "
+    "НОВЫХ ЗАПИСОК НЕТ"
 )
+
+
+# Служебные слова запроса, которые не несут тему и не должны отсекать узлы.
+_MEMO_STOP_WORDS = frozenset({
+    "найди", "найти", "покажи", "поиск", "записки", "записку", "записка",
+    "запискам", "служебные", "служебки", "служебную", "служебная", "закупке",
+    "принадлежностей", "принадлежности", "все", "всех", "по", "про", "о",
+    "об", "теме", "тематика", "связанные", "связанных", "релевантные",
+})
+
+
+def _count_tokens(*texts: str) -> int:
+    """Оценка количества токенов через tiktoken (cl100k_base).
+
+    При недоступности энкодера — грубая оценка 4 символа на токен.
+    """
+    total = 0
+    enc = None
+    for t in texts:
+        t = t or ""
+        if not t:
+            continue
+        if enc is None:
+            try:
+                import tiktoken
+                enc = tiktoken.get_encoding("cl100k_base")
+            except Exception:
+                enc = False
+        if enc:
+            try:
+                total += len(enc.encode(t))
+            except Exception:
+                total += max(1, len(t) // 4)
+        else:
+            total += max(1, len(t) // 4)
+    return total
+
+
+def _memo_topic_words(prompt: str) -> List[str]:
+    """Извлекает значимые слова темы из запроса для предварительного фильтра.
+
+    Слова длиннее 3 символов, очищенные от служебных стоп-слов. Для каждого
+    слова хранится его первый корень (до 5 символов) — чтобы отсекать узлы
+    по имени файла (там слова в падежной форме: «канцелярск» + «канцелярских»).
+    Возвращает уникальные корни в порядке появления в запросе.
+    """
+    words = re.findall(r"[А-Яа-яЁё]{4,}", (prompt or "").lower())
+    roots = []
+    seen = set()
+    for w in words:
+        if w in _MEMO_STOP_WORDS:
+            continue
+        root = w[:5]
+        if root not in seen:
+            seen.add(root)
+            roots.append(root)
+    return roots
+
+
+def _memo_file_match(file_name: str, topic_roots: List[str]) -> bool:
+    """True, если имя файла содержит корень хотя бы одного слова темы.
+
+    Сравнение по подстроке корня (без учёта падежей): имя файла записок
+    «#297-2026.03.01-О закупке канцелярских принадлежностей.docx» содержит
+    корни «закуп», «канцеляр», «принадлеж». Это дешёвый предфильтр до LLM.
+    """
+    if not topic_roots:
+        return True
+    name = (file_name or "").lower()
+    return any(r in name for r in topic_roots)
 
 
 class _ExcludeNodeIdsPostprocessor(BaseNodePostprocessor):
@@ -69,8 +142,11 @@ class _ExcludeNodeIdsPostprocessor(BaseNodePostprocessor):
 class RAGEngine:
     """RAG-движок: индексация документов и поиск по ним."""
 
+    VERSION = "26.09.22"
+
     def __init__(self, config: Optional[Settings] = None):
         self.cfg = config or Settings()
+        self.version = self.VERSION
         self.documents_paths = list(self.cfg.sync_folders or [])
         if getattr(sys, "frozen", False):
             # В frozen-сборке .cache кладём рядом с exe, а не в cwd.
@@ -423,7 +499,15 @@ class RAGEngine:
         """Генератор SSE-событий для внешних агентов.
 
         Поиск по индексу (RAG) + ответ LLM с учётом системного промпта агента.
-        События: token / sources / done / error.
+        События: token / reasoning(thinking) / sources / done / error.
+
+        Финальный промпт собирается вручную (ретрив + упаковка контекста), а
+        генерация идёт через прямой `llm.stream_chat` — в отличие от синтеза
+        query_engine (compact) его `response_gen` отдаёт только текст и теряет
+        «размышления» модели. Здесь каждый ChunkResponse несёт и текстовый delta
+        (событие `token`), и reasoning delta (`additional_kwargs["thinking_delta"]`,
+        событие `reasoning`) — как у OpenAI-совместимых reasoning-моделей, так и
+        у Ollama.
 
         exclude_node_ids: node_id фрагментов, уже отданных потребителю.
         Ключевые фрагменты этих id исключаются из ретрива — так можно
@@ -445,65 +529,94 @@ class RAGEngine:
         exclude_node_ids = [str(i) for i in (exclude_node_ids or [])]
 
         try:
-            qa_prompt_tmpl = PromptTemplate(
-                "Системная инструкция ассистента:\n"
-                + system_prompt
-                + "\n"
-                "-----\n"
-                "Контекстная информация из документов:\n"
-                "{context_str}\n"
-                "-----\n"
-                "Запрос пользователя/агента:\n"
-                "{query_str}\n"
-            )
-
             llm = self.provider.build_llm(
                 self.cfg.llm,
                 self.cfg.context_window,
                 temperature=temperature,
             )
-            engine_kwargs = dict(
-                similarity_top_k=top_k,
-                text_qa_template=qa_prompt_tmpl,
-                response_mode="compact",
-                streaming=True,
-                verbose=False,
-                llm=llm,
-            )
-            if exclude_node_ids:
-                # Запрашиваем с запасом, чтобы после фильтрации осталось ~top_k.
-                engine_kwargs["similarity_top_k"] = top_k + len(exclude_node_ids)
-                engine_kwargs["node_postprocessors"] = [
-                    _ExcludeNodeIdsPostprocessor(exclude_node_ids)
-                ]
-            query_engine = self.index.as_query_engine(**engine_kwargs)
 
-            response = query_engine.query(prompt)
+            # --- 1. Ретрив с запасом и ручное исключение уже отданных node_id ---
+            # Запрашиваем больше, чем top_k, потому что часть узлов отфильтруется.
+            retrieval_top_k = top_k + len(exclude_node_ids)
+            retriever = self.index.as_retriever(similarity_top_k=retrieval_top_k)
+            nodes = retriever.retrieve(prompt)
+            if exclude_node_ids:
+                nodes = [n for n in nodes if n.node.node_id not in set(exclude_node_ids)]
+            nodes = nodes[:top_k]
+
             sources = []
-            if hasattr(response, "source_nodes") and response.source_nodes:
-                for node in response.source_nodes:
-                    meta = node.node.metadata
-                    sources.append({
-                        "file_name": meta.get("file_name", ""),
-                        "file_path": meta.get("file_path", ""),
-                        "node_id": node.node.node_id,
-                        "score": round(float(getattr(node, "score", 0.0) or 0.0), 4),
-                    })
+            for node in nodes:
+                meta = node.node.metadata
+                sources.append({
+                    "file_name": meta.get("file_name", ""),
+                    "file_path": meta.get("file_path", ""),
+                    "node_id": node.node.node_id,
+                    "score": round(float(getattr(node, "score", 0.0) or 0.0), 4),
+                })
 
             # Источники известны сразу после ретрива — отдаём один раз до токенов.
             if sources:
                 yield {"type": "sources", "data": sources}
 
-            full_response = []
-            for token in response.response_gen:
-                full_response.append(token)
-                yield {"type": "token", "data": token}
+            # --- 2. Упаковка контекста под окно модели ---
+            node_texts = [n.node.get_content() for n in nodes]
+            # Оцениваем токены как ~4 символа/токен; резервируем вывод и промпт.
+            max_chars = max(0, (self.cfg.context_window - 512) * 4)
+            context_parts = []
+            used = 0
+            for text in node_texts:
+                room = max_chars - used
+                if room <= 0:
+                    break
+                context_parts.append(text[:room].rstrip() if len(text) > room else text)
+                used += len(context_parts[-1]) + 2
+            context_str = "\n\n".join(context_parts)
 
+            # --- 3. Сборка промпта (тот же вид, что давал text_qa_template) ---
+            prompt_text = (
+                "Системная инструкция ассистента:\n"
+                + system_prompt
+                + "\n-----\n"
+                "Контекстная информация из документов:\n"
+                + context_str
+                + "\n-----\n"
+                "Запрос пользователя/агента:\n"
+                + prompt
+                + "\n"
+            )
+
+            # --- 4. Стриминг через прямой stream_chat: текст + размышления ---
+            from llama_index.core.base.llms.types import ChatMessage, MessageRole
+
+            tokens_in = _count_tokens(prompt_text)
+            full_response = []
+            full_reasoning = []
+            t_start = time.perf_counter()
+            for resp in llm.stream_chat(
+                [ChatMessage(role=MessageRole.USER, content=prompt_text)]
+            ):
+                token = getattr(resp, "delta", "") or ""
+                if token:
+                    full_response.append(token)
+                    yield {"type": "token", "data": token}
+
+                thinking = (resp.additional_kwargs or {}).get("thinking_delta")
+                if thinking:
+                    full_reasoning.append(thinking)
+                    yield {"type": "reasoning", "data": thinking}
+            elapsed_llm = time.perf_counter() - t_start
+
+            answer_text = "".join(full_response)
+            reasoning_text = "".join(full_reasoning)
             yield {
                 "type": "done",
-                "answer": "".join(full_response),
+                "answer": answer_text,
+                "reasoning": reasoning_text,
                 "sources": sources,
                 "prompt": prompt,
+                "tokens_in": tokens_in,
+                "tokens_out": _count_tokens(answer_text, reasoning_text),
+                "elapsed": round(elapsed_llm, 2),
             }
         except Exception as e:
             yield {"type": "error", "data": str(e)}
@@ -515,7 +628,7 @@ class RAGEngine:
         self,
         prompt: str,
         temperature: Optional[float] = None,
-        page_size: int = 30,
+        page_size: int = 50,
         max_pages: int = 15,
     ):
         """Находит все служебные записки по теме и возвращает полный текст.
@@ -529,12 +642,41 @@ class RAGEngine:
           {ok, total, pages, documents: [{file_name, file_path, text}]}
         либо {error: ...}.
         """
+        result = None
+        for event in self.memos_stream(prompt, temperature=temperature,
+                                       page_size=page_size, max_pages=max_pages):
+            if event["type"] == "error":
+                return {"error": event["data"]}
+            if event["type"] == "done":
+                result = {
+                    "ok": True,
+                    "total": len(event["documents"]),
+                    "pages": event["pages"],
+                    "documents": event["documents"],
+                }
+        return result or {"error": "Нет данных"}
+
+    def memos_stream(
+        self,
+        prompt: str,
+        temperature: Optional[float] = None,
+        page_size: int = 50,
+        max_pages: int = 15,
+    ):
+        """Генератор SSE-событий для поиска записок (reasoning + done).
+
+        Как memos(), но отдаёт reasoning батч-LLM по мере обхода индекса
+        (событие `reasoning`), а финал — `done` с документами.
+        """
         if self.is_syncing:
-            return {"error": "Идет синхронизация"}
+            yield {"type": "error", "data": "Идет синхронизация"}
+            return
         if not self.is_initialized or self.index is None:
-            return {"error": "Индекс не готов"}
+            yield {"type": "error", "data": "Индекс не готов"}
+            return
         if not prompt or not str(prompt).strip():
-            return {"error": "Поле 'prompt' обязательно"}
+            yield {"type": "error", "data": "Поле 'prompt' обязательно"}
+            return
 
         temperature = temperature if temperature is not None else 0.0
         page_size = max(1, int(page_size))
@@ -551,23 +693,67 @@ class RAGEngine:
         found_paths_set = set()
         all_sources = []
         pages_used = 0
+        total_tokens_in = 0
+        total_tokens_out = 0
+        total_llm_time = 0.0
+
+        # Гибридный отбор кандидатов (без LLM):
+        #  1) имя-фильтр — файлы, чьё название содержит слова темы (надёжный
+        #     признак для записок «О ...»), идут первыми, полными чанками;
+        #  2) семантический ретрив — темы, которые есть по смыслу, но не
+        #     отражены в имени (например «О выделении средств» про канцелярию),
+        #     добавляются в том порядке, в котором их вернул ретрив (лучшее
+        #     первым, сортировать по score вручную не нужно — у Faiss это
+        #     расстояние, а не сходство).
+        topic_roots = _memo_topic_words(prompt)
+        by_path = self._index_nodes_by_path()
+        seen_order = set()
+        candidate_pairs = []  # [(file_path, node)] — порядок обхода батчей
+
+        if topic_roots:
+            name_matched = []
+            for fp, nds in by_path.items():
+                if _memo_file_match(os.path.basename(fp) or fp, topic_roots):
+                    name_matched.append((fp, nds))
+            name_matched.sort(key=lambda t: t[0].lower())
+            for fp, nds in name_matched:
+                for nd in nds:
+                    if nd.node_id in seen_order:
+                        continue
+                    seen_order.add(nd.node_id)
+                    candidate_pairs.append((fp, nd))
+
+        try:
+            retriever = self.index.as_retriever(
+                similarity_top_k=max(page_size, page_size * 3),
+            )
+            raw_nodes = retriever.retrieve(prompt)
+        except Exception:
+            raw_nodes = []
+        for n in raw_nodes:
+            fp = (n.node.metadata or {}).get("file_path", "")
+            if not fp or fp not in by_path or n.node.node_id in seen_order:
+                continue
+            seen_order.add(n.node.node_id)
+            candidate_pairs.append((fp, n.node))
 
         for page in range(max_pages):
             pages_used = page + 1
-            top_k = page_size + len(seen_ids)
-            retriever = self.index.as_retriever(similarity_top_k=top_k)
-            raw_nodes = retriever.retrieve(prompt)
-            nodes = [
-                n for n in raw_nodes
-                if n.node.node_id not in seen_ids
-            ][:page_size]
-            if not nodes:
-                break
 
-            page_ids = {n.node.node_id for n in nodes}
-            new_ids = page_ids - seen_ids
-            seen_ids |= new_ids
-            if not new_ids:
+            if not candidate_pairs:
+                # Кандидатов нет (пустой индекс/пустой ретрив) — завершаем.
+                break
+            # Постраничный проход по кандидатам (меньше контекста → короче reasoning).
+            start = page * page_size
+            batch_pairs = candidate_pairs[start:start + page_size]
+            if not batch_pairs:
+                break
+            nodes = []
+            for fp, nd in batch_pairs:
+                if nd.node_id not in seen_ids:
+                    seen_ids.add(nd.node_id)
+                    nodes.append(NodeWithScore(node=nd, score=0.0))
+            if not nodes:
                 break
 
             batch_paths = set()
@@ -596,20 +782,38 @@ class RAGEngine:
                 "[Файл: <полный путь>]):\n"
                 + "\n\n".join(context_parts)
             )
+
+            # Батч-LLM стримит reasoning (thinking) + текст ответа.
+            from llama_index.core.base.llms.types import ChatMessage, MessageRole
+            answer_parts = []
+            total_tokens_in += _count_tokens(user_prompt)
+            t_batch = time.perf_counter()
             try:
-                answer = llm.complete(user_prompt).text or ""
+                for resp in llm.stream_chat(
+                    [ChatMessage(role=MessageRole.USER, content=user_prompt)]
+                ):
+                    token = getattr(resp, "delta", "") or ""
+                    if token:
+                        answer_parts.append(token)
+                    thinking = (resp.additional_kwargs or {}).get("thinking_delta")
+                    if thinking:
+                        yield {"type": "reasoning", "data": thinking}
             except Exception as e:
-                return {"error": f"Ошибка LLM на батче {page + 1}: {e}"}
+                yield {"type": "error", "data": f"Ошибка LLM на батче {page + 1}: {e}"}
+                return
+            total_llm_time += time.perf_counter() - t_batch
+            answer = "".join(answer_parts)
+            total_tokens_out += _count_tokens(answer)
 
             added_any = False
-            for m in re.finditer(r"ПУТЬ:\s*(\S[^\n]*)", answer):
+            for m in re.finditer(r"(?:ПУТЬ:\s*)?(\S[^\n]*)", answer):
                 path = m.group(1).strip()
                 if path in batch_paths and path not in found_paths_set:
                     found_paths.append(path)
                     found_paths_set.add(path)
                     added_any = True
 
-            if "НОВЫХ ЗАПИСОК НЕТ" in answer.upper() and not added_any:
+            if (not answer.strip() or "НОВЫХ ЗАПИСОК НЕТ" in answer.upper()) and not added_any:
                 break
 
         documents = []
@@ -621,11 +825,15 @@ class RAGEngine:
                 "text": self._assemble_document_text(fp, nodes_by_path.get(fp)),
             })
 
-        return {
-            "ok": True,
-            "total": len(documents),
-            "pages": pages_used,
+        # Суммарные метрики времени/токенов батч-LLM по всем страницам.
+        yield {
+            "type": "done",
             "documents": documents,
+            "pages": pages_used,
+            "prompt": prompt,
+            "tokens_in": total_tokens_in,
+            "tokens_out": total_tokens_out,
+            "elapsed": round(total_llm_time, 2),
         }
 
     def _index_nodes_by_path(self) -> dict:

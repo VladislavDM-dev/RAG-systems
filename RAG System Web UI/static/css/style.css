@@ -224,6 +224,31 @@ body {
 
 .sources-list strong { color: #495057; }
 
+.reasoning-block {
+    margin-top: 10px;
+    font-size: 0.85rem;
+    color: #6c757d;
+    border: 1px dashed #ced4da;
+    border-radius: 8px;
+    padding: 6px 10px;
+    background: #f8f9fa;
+}
+
+.reasoning-block summary {
+    cursor: pointer;
+    color: #495057;
+    font-weight: 600;
+    outline: none;
+}
+
+.reasoning-content {
+    margin-top: 6px;
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 300px;
+    overflow-y: auto;
+}
+
 .file-badge {
     display: inline-block;
     background: #e9ecef;
@@ -384,6 +409,51 @@ body {
 .memo-list ol > li {
     margin-bottom: 12px;
     font-weight: 600;
+}
+
+/* Раскрывающаяся плитка одной записки (свёрнута по умолчанию) */
+.memo-item {
+    border: 1px solid #e9ecef;
+    border-radius: 8px;
+    background: #fff;
+    padding: 6px 10px;
+}
+
+.memo-item[open] {
+    background: #f8f9fa;
+}
+
+.memo-item-summary {
+    cursor: pointer;
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 2px 0;
+    color: #495057;
+    outline: none;
+}
+
+.memo-item-title {
+    font-weight: 600;
+}
+
+.memo-item-badge {
+    font-size: 0.78em;
+    color: #6c757d;
+    word-break: break-all;
+    font-weight: 400;
+    text-align: right;
+}
+
+/* Метрики ответа (токены · время) */
+.response-meta {
+    font-size: 0.78em;
+    color: #6c757d;
+}
+
+.response-meta i {
+    font-style: normal;
 }
 
 .memo-meta {

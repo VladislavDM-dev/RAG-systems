@@ -117,6 +117,7 @@ async function streamSSE(url, body, callbacks) {
             if (data.type === 'done') callbacks.onDone?.(data);
             if (data.type === 'error') callbacks.onError?.(data);
             if (data.type === 'sources') callbacks.onSources?.(data.data || []);
+            if (data.type === 'reasoning') callbacks.onReasoning?.(data.data || '');
             if (data.type === 'token') callbacks.onToken?.(data.data || '');
         }
     }
@@ -128,6 +129,7 @@ async function streamSSE(url, body, callbacks) {
                 callbacks.onEvent?.(data);
                 if (data.type === 'done') callbacks.onDone?.(data);
                 if (data.type === 'error') callbacks.onError?.(data);
+                if (data.type === 'reasoning') callbacks.onReasoning?.(data.data || '');
                 if (data.type === 'token') callbacks.onToken?.(data.data || '');
             } catch (e) { /* ignore */ }
         }

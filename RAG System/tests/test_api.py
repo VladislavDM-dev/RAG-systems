@@ -296,6 +296,55 @@ def test_memos_emits_documents(client, monkeypatch):
     assert calls["temperature"] == 0.1
 
 
+def test_memos_stream_emits_reasoning(client, monkeypatch):
+    """/rag/memos/stream отдаёт reasoning-события и финальный done."""
+    import app as app_module
+
+    engine = app_module.engine
+    calls = {}
+
+    def fake_memos_stream(prompt, temperature=None, page_size=30, max_pages=15):
+        calls["prompt"] = prompt
+        calls["temperature"] = temperature
+        yield {"type": "reasoning", "data": "Батч 1: ищу упоминания"}
+        yield {"type": "reasoning", "data": "Батч 2: путь подходит"}
+        yield {
+            "type": "done",
+            "documents": [{
+                "file_name": "a.docx",
+                "file_path": "C:\\out\\a.docx",
+                "text": "Служебная записка №1",
+            }],
+            "pages": 2,
+            "prompt": prompt,
+        }
+
+    monkeypatch.setattr(engine, "memos_stream", fake_memos_stream)
+    engine.is_initialized = True
+    engine.index = object()
+
+    r = client.post(
+        "/rag/memos/stream",
+        json={"prompt": "канцтовары", "temperature": 0.1},
+    )
+    assert r.status_code == 200
+    assert "text/event-stream" in r.headers.get("Content-Type", "")
+
+    import json as _json
+    events = []
+    for line in r.get_data(as_text=True).splitlines():
+        if line.startswith("data: "):
+            events.append(_json.loads(line[6:]))
+    assert events[0] == {"type": "reasoning", "data": "Батч 1: ищу упоминания"}
+    assert events[1] == {"type": "reasoning", "data": "Батч 2: путь подходит"}
+    done = events[2]
+    assert done["type"] == "done"
+    assert done["documents"][0]["file_path"] == "C:\\out\\a.docx"
+    assert done["pages"] == 2
+    assert calls["prompt"] == "канцтовары"
+    assert calls["temperature"] == 0.1
+
+
 def test_agent_stream_without_index(client):
     """Если индекс не готов — корректный 503."""
     r = client.post("/rag/agent/stream", json={"prompt": "гарантия"})
@@ -304,7 +353,7 @@ def test_agent_stream_without_index(client):
 
 
 def test_agent_stream_emits_events(client, monkeypatch):
-    """Поток агента отдаёт token/sources/done (SSE)."""
+    """Поток агента отдаёт reasoning/token/sources/done (SSE)."""
     import app as app_module
 
     engine = app_module.engine
@@ -323,11 +372,13 @@ def test_agent_stream_emits_events(client, monkeypatch):
             "type": "sources",
             "data": [{"file_name": "a.doc", "file_path": "C:\\a.doc", "score": 0.9}],
         }
+        yield {"type": "reasoning", "data": "Анализ"}
         yield {"type": "token", "data": "Ответ: "}
         yield {"type": "token", "data": "тест"}
         yield {
             "type": "done",
             "answer": "Ответ: тест",
+            "reasoning": "Анализ",
             "sources": [{"file_name": "a.doc", "file_path": "C:\\a.doc", "score": 0.9}],
             "prompt": prompt,
         }
@@ -356,10 +407,12 @@ def test_agent_stream_emits_events(client, monkeypatch):
             events.append(json.loads(line[6:]))
 
     types = [e["type"] for e in events]
-    assert types == ["sources", "token", "token", "done"]
+    assert types == ["sources", "reasoning", "token", "token", "done"]
     assert "".join(e.get("data", "") for e in events if e["type"] == "token") == "Ответ: тест"
+    assert "".join(e.get("data", "") for e in events if e["type"] == "reasoning") == "Анализ"
     assert events[-1]["type"] == "done"
     assert events[-1]["answer"] == "Ответ: тест"
+    assert events[-1]["reasoning"] == "Анализ"
     assert events[-1]["sources"][0]["file_name"] == "a.doc"
 
     assert calls["prompt"] == "Расскажи про гарантию"

@@ -59,11 +59,15 @@ def api_chat_stream():
     def generate():
         sources = []
         full_answer = ""
+        full_reasoning = ""
         for event in rag.stream_chat(prompt, system_prompt=system_prompt,
                                      top_k=data.get("top_k"),
                                      temperature=data.get("temperature")):
             if event.get("type") == "sources":
                 sources = event.get("data", [])
+                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+            elif event.get("type") == "reasoning":
+                full_reasoning += event.get("data", "")
                 yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
             elif event.get("type") == "token":
                 full_answer += event.get("data", "")
@@ -75,8 +79,12 @@ def api_chat_stream():
                 final = {
                     "type": "done",
                     "answer": full_answer,
+                    "reasoning": full_reasoning or event.get("reasoning", ""),
                     "sources": _dedupe_sources(merged_sources),
                     "prompt": prompt,
+                    "tokens_in": event.get("tokens_in"),
+                    "tokens_out": event.get("tokens_out"),
+                    "elapsed": event.get("elapsed"),
                 }
                 yield f"data: {json.dumps(final, ensure_ascii=False)}\n\n"
             elif event.get("type") == "error":
@@ -161,10 +169,45 @@ def _memos_answer(documents, prompt):
 
 
 def _stream_memos(rag, prompt, temperature):
-    """Поиск всех записок по теме через ядро: ядро само листает индекс
-    и возвращает документы (название, полный путь, полный текст)."""
+    """Поиск всех записок по теме через ядро: стримится reasoning батч-LLM,
+    в конце — события done с документами (название, полный путь, полный текст)."""
     def emit(payload):
         return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+    # Предпочитаем потоковый endpoint ядра (reasoning), иначе — fallback.
+    if hasattr(rag, "memos_stream"):
+        try:
+            documents = []
+            full_reasoning = []
+            metrics = {}
+            for event in rag.memos_stream(prompt, temperature=temperature):
+                etype = event.get("type")
+                if etype == "error":
+                    yield emit({"type": "error", "data": event.get("data", "Ошибка")})
+                    return
+                if etype == "reasoning":
+                    part = event.get("data", "")
+                    full_reasoning.append(part)
+                    yield emit({"type": "reasoning", "data": part})
+                if etype == "done":
+                    documents = event.get("documents") or []
+                    for key in ("tokens_in", "tokens_out", "elapsed"):
+                        if event.get(key) is not None:
+                            metrics[key] = event.get(key)
+            yield emit({
+                "type": "done",
+                "answer": _memos_answer(documents, prompt),
+                "documents": documents,
+                "reasoning": "".join(full_reasoning),
+                "prompt": prompt,
+                "tokens_in": metrics.get("tokens_in"),
+                "tokens_out": metrics.get("tokens_out"),
+                "elapsed": metrics.get("elapsed"),
+            })
+            return
+        except Exception as e:
+            yield emit({"type": "error", "data": str(e)})
+            return
 
     try:
         result = rag.memos(prompt, temperature=temperature)
@@ -183,6 +226,7 @@ def _stream_memos(rag, prompt, temperature):
     yield emit({
         "type": "done",
         "answer": _memos_answer(documents, prompt),
+        "documents": documents,
         "prompt": prompt,
     })
 

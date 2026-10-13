@@ -16,7 +16,7 @@ import httpx
 _PROBE_TIMEOUT = httpx.Timeout(connect=3.0, read=8.0, write=8.0, pool=3.0)
 _PROBE_MAX_RETRIES = 1
 # Реальная генерация (ключевые слова) может быть долгой — щедрый таймаут.
-_GENERATE_TIMEOUT = 120.0
+_GENERATE_TIMEOUT = 600.0
 
 
 class ProviderError(RuntimeError):
@@ -145,6 +145,7 @@ class LMStudioProvider(BaseProvider):
             temperature=temperature,
             context_window=context_window,
             streaming=True,
+            timeout=600.0,
             is_chat_model=True,
             system_prompt="Ты полезный ассистент. Всегда отвечай на русском языке.",
         )

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>02. Ядро RAG System · RAG System Docs</title>
+<title>02. Ядро RAG · RAG System Docs</title>
 <link rel="stylesheet" href="style.css">
 <script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
 <script>
@@ -22,14 +22,14 @@
   <a href="00-README.html">00.</a> <a href="01-architecture.html">01.</a> <span class="cur">02.</span> <a href="03-web-ui.html">03.</a> <a href="04-api-core.html">04.</a> <a href="05-api-webui.html">05.</a> <a href="06-database.html">06.</a> <a href="07-memo-wizard.html">07.</a> <a href="08-installation.html">08.</a> <a href="09-testing.html">09.</a> <a href="10-build.html">10.</a> <a href="11-troubleshooting.html">11.</a> <a href="12-git-and-conventions.html">12.</a>
 </nav>
 <header class="pagetitle">
-  <h1>02. Ядро RAG System</h1>
+  <h1>02. Ядро RAG</h1>
   <p class="srcnote">Исходник: <code>doc/02-core-rag-system.md</code> · Mermaid-диаграммы рендерятся браузером (CDN); при отключённом JS показан код диаграммы.</p>
 </header>
 <main>
 <h1>02. Ядро RAG System</h1>
 <p>Папка: <code>C:\Scripts\RAG systems\RAG System</code> (свой <code>.venv</code>).</p>
 <h2>2.1 Состав</h2>
-<pre><code>RAG System/
+<pre><code class="language-text">RAG System/
 ├── app.py                  # Flask API-сервис (префикс /rag), запуск engine.initialize()
 ├── build.spec              # PyInstaller onedir-сборка
 ├── hook_runtime.py         # UTF-8 для stdout/stderr в frozen-режиме
@@ -44,137 +44,53 @@
 │   ├── doc_parser.py       # .doc → .docx (COM) → Markdown
 │   ├── pdf_parser.py       # .pdf → ABBYY FineReader 15 → .docx → Markdown
 │   └── file_hash_manager.py# SQLite-таблица MD5-хэшей файлов
-└── tests/                  # pytest (см. doc 09)
-</code></pre>
+└── tests/                  # pytest (см. doc 09)</code></pre>
 <h2>2.2 <code>config.py</code> — Settings</h2>
 <p><code>Settings</code> — dataclass, сохраняемая в <code>rag_engine/settings.json</code> (файл в <code>.gitignore</code> — локальная конфигурация). Путь файла: <code>config_dir() / "settings.json"</code>.</p>
-<pre><code class="language-python">config_dir():  # frozen → рядом с exe; иначе рядом с модулем rag_engine/
-</code></pre>
-<table>
-<thead>
-<tr>
-<th>Поле</th>
-<th>По умолчанию</th>
-<th>Примечание</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>provider</code></td>
-<td><code>ollama</code></td>
-<td><code>ollama</code> | <code>lmstudio</code></td>
-</tr>
-<tr>
-<td><code>context_window</code></td>
-<td><code>4096</code></td>
-<td>окно LLM (в локальном settings.json 32768)</td>
-</tr>
-<tr>
-<td><code>chunk_size</code></td>
-<td><code>256</code></td>
-<td>размер чанка</td>
-</tr>
-<tr>
-<td><code>chunk_overlap</code></td>
-<td><code>50</code></td>
-<td>перекрытие чанков</td>
-</tr>
-<tr>
-<td><code>similarity_top_k</code></td>
-<td><code>10</code></td>
-<td>сколько фрагментов в ретрив</td>
-</tr>
-<tr>
-<td><code>page_limit</code></td>
-<td><code>10</code></td>
-<td>макс. страниц документа</td>
-</tr>
-<tr>
-<td><code>size_limit_mb</code></td>
-<td><code>5</code></td>
-<td>макс. размер файла, МБ</td>
-</tr>
-<tr>
-<td><code>embedding_dim</code></td>
-<td><code>768</code></td>
-<td>размерность эмбеддингов (важно для FAISS)</td>
-</tr>
-<tr>
-<td><code>llm</code></td>
-<td><code>qwen3:4b</code></td>
-<td>поколение модель</td>
-</tr>
-<tr>
-<td><code>llm_embed</code></td>
-<td><code>nomic-embed-text-v2-moe:latest</code></td>
-<td>эмбеддинг-модель</td>
-</tr>
-<tr>
-<td><code>llm_keywords</code></td>
-<td><code>llama3.2:3b</code></td>
-<td>модель ключевых слов</td>
-</tr>
-<tr>
-<td><code>url</code></td>
-<td><code>http://127.0.0.1:11434</code></td>
-<td>адрес API провайдера</td>
-</tr>
-<tr>
-<td><code>api_key</code></td>
-<td><code>""</code></td>
-<td>для OpenAI-совместимых (у LM Studio не важен)</td>
-</tr>
-<tr>
-<td><code>sync_folders</code></td>
-<td><code>[]</code></td>
-<td>папки для сканирования</td>
-</tr>
-</tbody>
-</table>
-<p>Методы: <code>save()</code> (атомарно через <code>.tmp</code> + <code>replace</code>), <code>to_dict()</code>, <code>update(**kwargs) -&gt; list изменённых ключей</code> (сохраняет только при реальных изменениях).</p>
-<blockquote>
-<p>Локальный <code>settings.json</code> на момент написания: <code>provider=lmstudio</code>, <code>url=http://127.0.0.1:1234/v1</code>, <code>llm=qwen3.8-4b-distill</code>, <code>llm_embed=text-embedding-nomic-embed-text-v1.5</code>, <code>sync_folders=["C:\Scripts\RAG systems\out"]</code>.</p>
-</blockquote>
+<pre><code class="language-python">config_dir():  # frozen → рядом с exe; иначе рядом с модулем rag_engine/</code></pre>
+<table><tr><th>Поле</th><th>По умолчанию</th><th>Примечание</th></tr><tr><td><code>provider</code></td><td><code>ollama</code></td><td><code>ollama</code> \</td><td><code>lmstudio</code></td></tr><tr><td><code>context_window</code></td><td><code>4096</code></td><td>окно LLM (в локальном settings.json 32768)</td></tr><tr><td><code>chunk_size</code></td><td><code>256</code></td><td>размер чанка</td></tr><tr><td><code>chunk_overlap</code></td><td><code>50</code></td><td>перекрытие чанков</td></tr><tr><td><code>similarity_top_k</code></td><td><code>10</code></td><td>сколько фрагментов в ретрив</td></tr><tr><td><code>page_limit</code></td><td><code>10</code></td><td>макс. страниц документа</td></tr><tr><td><code>size_limit_mb</code></td><td><code>5</code></td><td>макс. размер файла, МБ</td></tr><tr><td><code>embedding_dim</code></td><td><code>768</code></td><td>размерность эмбеддингов (важно для FAISS)</td></tr><tr><td><code>llm</code></td><td><code>qwen3:4b</code></td><td>поколение модель</td></tr><tr><td><code>llm_embed</code></td><td><code>nomic-embed-text-v2-moe:latest</code></td><td>эмбеддинг-модель</td></tr><tr><td><code>llm_keywords</code></td><td><code>llama3.2:3b</code></td><td>модель ключевых слов</td></tr><tr><td><code>url</code></td><td><code>http://127.0.0.1:11434</code></td><td>адрес API провайдера</td></tr><tr><td><code>api_key</code></td><td><code>""</code></td><td>для OpenAI-совместимых (у LM Studio не важен)</td></tr><tr><td><code>sync_folders</code></td><td><code>[]</code></td><td>папки для сканирования</td></tr></table>
+<p>Методы: <code>save()</code> (атомарно через <code>.tmp</code> + <code>replace</code>), <code>to_dict()</code>, <code>update(**kwargs) -> list изменённых ключей</code> (сохраняет только при реальных изменениях).</p>
+<blockquote>Локальный <code>settings.json</code> на момент написания: <code>provider=lmstudio</code>, <code>url=http://127.0.0.1:1234/v1</code>, <code>llm=qwen3.8-4b-distill</code>, <code>llm_embed=text-embedding-nomic-embed-text-v1.5</code>, <code>sync_folders=["C:\Scripts\RAG systems\out"]</code>.</blockquote>
 <h2>2.3 <code>providers.py</code> — абстракция над инференсом</h2>
 <p>Единый интерфейс <code>BaseProvider</code>:</p>
 <ul>
 <li><code>build_llm(model, context_window, temperature)</code> → объект LlamaIndex (streaming).</li>
 <li><code>build_embed_model(model)</code> → эмбеддинги LlamaIndex.</li>
 <li><code>generate_text(model, prompt)</code> → однопроходная генерация (для ключевых слов).</li>
-<li><code>list_models() -&gt; list[str]</code> — список моделей бэкенда.</li>
+<li><code>list_models() -> list[str]</code> — список моделей бэкенда.</li>
 <li><code>is_available()</code> / <code>capabilities(model, cap)</code>.</li>
 </ul>
 <div class="mmd"><div class="mermaid">flowchart LR
-    CF["Settings.provider"] --&gt; FAC["create_provider()"]
-    FAC --&gt; OP["OllamaProvider\nurl http://host:11434\n(нативный Ollama API)"]
-    FAC --&gt; LP["LMStudioProvider\nurl http://host:1234/v1\n(OpenAI-совместимый)"]
-    OP --&gt; O1["build_llm → llama_index.llms.ollama.Ollama"]
-    OP --&gt; O2["build_embed → llama_index.embeddings.ollama.OllamaEmbedding"]
-    O1 --&gt; O3["ollama.Client (list/generate/show)"]
-    LP --&gt; L1["build_llm → llama_index.llms.openai_like.OpenAILike"]
-    LP --&gt; L2["build_embed → llama_index.embeddings.openai.OpenAIEmbedding"]
-    L1 --&gt; L3["openai.OpenAI (chat.completions)"]</div><details class="mmdcode"><summary>Код диаграммы</summary><pre class="diagram">flowchart LR
-    CF["Settings.provider"] --&gt; FAC["create_provider()"]
-    FAC --&gt; OP["OllamaProvider\nurl http://host:11434\n(нативный Ollama API)"]
-    FAC --&gt; LP["LMStudioProvider\nurl http://host:1234/v1\n(OpenAI-совместимый)"]
-    OP --&gt; O1["build_llm → llama_index.llms.ollama.Ollama"]
-    OP --&gt; O2["build_embed → llama_index.embeddings.ollama.OllamaEmbedding"]
-    O1 --&gt; O3["ollama.Client (list/generate/show)"]
-    LP --&gt; L1["build_llm → llama_index.llms.openai_like.OpenAILike"]
-    LP --&gt; L2["build_embed → llama_index.embeddings.openai.OpenAIEmbedding"]
-    L1 --&gt; L3["openai.OpenAI (chat.completions)"]</pre></details></div>
+    CF[&quot;Settings.provider&quot;] --&gt; FAC[&quot;create_provider()&quot;]
+    FAC --&gt; OP[&quot;OllamaProvider\nurl http://host:11434\n(нативный Ollama API)&quot;]
+    FAC --&gt; LP[&quot;LMStudioProvider\nurl http://host:1234/v1\n(OpenAI-совместимый)&quot;]
+    OP --&gt; O1[&quot;build_llm → llama_index.llms.ollama.Ollama&quot;]
+    OP --&gt; O2[&quot;build_embed → llama_index.embeddings.ollama.OllamaEmbedding&quot;]
+    O1 --&gt; O3[&quot;ollama.Client (list/generate/show)&quot;]
+    LP --&gt; L1[&quot;build_llm → llama_index.llms.openai_like.OpenAILike&quot;]
+    LP --&gt; L2[&quot;build_embed → llama_index.embeddings.openai.OpenAIEmbedding&quot;]
+    L1 --&gt; L3[&quot;openai.OpenAI (chat.completions)&quot;]</div><details class="mmdcode"><summary>Код диаграммы</summary><pre class="diagram">flowchart LR
+    CF[&quot;Settings.provider&quot;] --&gt; FAC[&quot;create_provider()&quot;]
+    FAC --&gt; OP[&quot;OllamaProvider\nurl http://host:11434\n(нативный Ollama API)&quot;]
+    FAC --&gt; LP[&quot;LMStudioProvider\nurl http://host:1234/v1\n(OpenAI-совместимый)&quot;]
+    OP --&gt; O1[&quot;build_llm → llama_index.llms.ollama.Ollama&quot;]
+    OP --&gt; O2[&quot;build_embed → llama_index.embeddings.ollama.OllamaEmbedding&quot;]
+    O1 --&gt; O3[&quot;ollama.Client (list/generate/show)&quot;]
+    LP --&gt; L1[&quot;build_llm → llama_index.llms.openai_like.OpenAILike&quot;]
+    LP --&gt; L2[&quot;build_embed → llama_index.embeddings.openai.OpenAIEmbedding&quot;]
+    L1 --&gt; L3[&quot;openai.OpenAI (chat.completions)&quot;]</pre></details></div>
 <p>Таймауты (важно для админки):</p>
 <ul>
 <li><code>_PROBE_TIMEOUT = httpx.Timeout(connect=3, read=8, write=8, pool=3)</code>, <code>_PROBE_MAX_RETRIES = 1</code> — быстрый отказ при недоступном бэкенде (иначе смена провайдера через админку зависает на десятки секунд).</li>
 <li><code>_GENERATE_TIMEOUT = 600.0</code> — щедрый таймаут реальной генерации.</li>
 </ul>
-<p><code>LMStudioProvider.capabilities</code>: распознавание эмбеддинговых моделей <strong>по имени</strong> (<code>_EMBED_MODEL_HINTS</code>: <code>embed</code>, <code>bge</code>, <code>mxbai</code>, <code>gte-</code>, <code>e5-*</code>, <code>nomic-embed</code>). Для Ollama — по нативным <code>capabilities</code> (<code>ollama show</code>).</p>
+<p><code>LMStudioProvider.capabilities</code>: распознавание эмбеддинговых моделей <b>по имени</b> (<code>_EMBED_MODEL_HINTS</code>: <code>embed</code>, <code>bge</code>, <code>mxbai</code>, <code>gte-</code>, <code>e5-*</code>, <code>nomic-embed</code>). Для Ollama — по нативным <code>capabilities</code> (<code>ollama show</code>).</p>
 <h2>2.4 Парсеры</h2>
 <h3><code>docx_parser.py</code></h3>
 <ul>
-<li><code>DocxParser(file_path)</code>: открывает через <code>python-docx</code>, обходит <code>doc.element.body</code>, сохраняя структуру (заголовки <code>Heading 1..3</code>, списки <code>-</code>, таблицы → Markdown-таблицы). Изображения игнорируются.</li>
+<li><code>DocxParser(file_path)</code>: открывает через <code>python-docx</code>, обходит <code>doc.element.body</code>, сохраняя структуру (заголовки <code>Heading 1..3</code>, списки <code>- </code>, таблицы → Markdown-таблицы). Изображения игнорируются.</li>
 <li><code>DocxParser.get_page_count(path)</code>: подсчёт страниц через Word COM (<code>doc.Content.Information(4)</code>), сериализован <code>_WORD_LOCK</code>, COM-апартмент инициализируется один раз на поток (<code>_ensure_com</code>/<code>_teardown_com</code>).</li>
-<li><code>parse(check_page_count=True)</code>: если <code>page_count == 0 or page_count &gt; 10</code> → вернёт <code>(page_count, None)</code>.</li>
+<li><code>parse(check_page_count=True)</code>: если <code>page_count == 0 or page_count > 10</code> → вернёт <code>(page_count, None)</code>.</li>
 </ul>
 <h3><code>doc_parser.py</code></h3>
 <ul>
@@ -182,7 +98,7 @@
 </ul>
 <h3><code>pdf_parser.py</code></h3>
 <ul>
-<li><code>PdfParser.parse()</code>: конвертация через ABBYY FineReader 15 (<code>FineCmd.exe &lt;pdf&gt; /out &lt;docx&gt; /lang Russian+English /quit</code>), затем парсинг через <code>DocxParser</code>.</li>
+<li><code>PdfParser.parse()</code>: конвертация через ABBYY FineReader 15 (<code>FineCmd.exe <pdf> /out <docx> /lang Russian+English /quit</code>), затем парсинг через <code>DocxParser</code>.</li>
 <li><code>get_page_count()</code>: <code>PyPDF2.PdfReader</code> — число страниц без OCR.</li>
 <li>Жёсткий путь: <code>C:\Program Files (x86)\ABBYY FineReader 15\FineCmd.exe</code>. Если FineReader нет — <code>RuntimeError</code>.</li>
 </ul>
@@ -200,7 +116,7 @@
 <li><code>cfg.save()</code> при старте.</li>
 </ul>
 <h3>Синхронизация (<code>sync_index</code>)</h3>
-<p>Описана в документе 01 (раздел 1.4). Методы: <code>_scan_documents()</code> (обход, фильтр форматов <code>.doc/.docx/.pdf</code>, пропуск <code>~*</code>, <code>*.tmp</code>, размер &gt; <code>size_limit_mb</code>), <code>_load_document()</code>, <code>_remove_nodes_for_files()</code>. Возвращает <code>(new_or_modified, [], current_hashes)</code> — удаление файлов сейчас не детектируется (deleted всегда <code>[]</code>).</p>
+<p>Описана в документе 01 (раздел 1.4). Методы: <code>_scan_documents()</code> (обход, фильтр форматов <code>.doc/.docx/.pdf</code>, пропуск <code>~<i></code>, <code></i>.tmp</code>, размер > <code>size_limit_mb</code>), <code>_load_document()</code>, <code>_remove_nodes_for_files()</code>. Возвращает <code>(new_or_modified, [], current_hashes)</code> — удаление файлов сейчас не детектируется (deleted всегда <code>[]</code>).</p>
 <h3>Инициализация моделей</h3>
 <p><code>__init_backend()</code>: <code>LlamaSettings.llm = provider.build_llm(cfg.llm, cfg.context_window, temperature=0.98)</code>, <code>embed_model = provider.build_embed_model(cfg.llm_embed)</code>.</p>
 <p><code>__check_backend()</code>: <code>list_models()</code>; при недоступном бэкенде очищает списки моделей (чтобы админка не показывала устаревшие) и <code>status_backend=False</code>.</p>
@@ -217,21 +133,21 @@
 <li><code>error</code> — на исключение.</li>
 </ol>
 <h3><code>memos</code> / <code>memos_stream</code> — поиск всех записок</h3>
-<p>Детально в документе 01 (раздел 1.5). Ключевые помощники:</p>
+<p>Детально в документе 01 (раздел 1.5). Кандидаты отбираются <b>только семантическим ретривом по содержимому</b> (имя файла не участвует — иначе возможны потери, если тема не отражена в названии). Ключевые помощники:</p>
 <ul>
-<li><code>_memo_topic_words(prompt)</code> — стоп-слова (<code>_MEMO_STOP_WORDS</code>), корни до 5 символов для фильтра по именам файлов (<code>канцелярск</code> + <code>канцелярских</code>).</li>
-<li><code>_memo_file_match(name, roots)</code> — подстрока корня в имени файла (дёшевый предфильтр до LLM).</li>
-<li><code>_MEMO_BATCH_SYSTEM_PROMPT</code> — промпт батча, просит вернуть только <code>ПУТЬ: &lt;полный путь&gt;</code> по строкам или ровно «НОВЫХ ЗАПИСОК НЕТ».</li>
-<li><code>_index_nodes_by_path()</code> — <code>file_path -&gt; [nodes]</code> из docstore (O(N), узлы сортируются по <code>start_char_idx</code>).</li>
+<li><code>_MEMO_BATCH_SYSTEM_PROMPT</code> — промпт батча, просит вернуть только <code>ПУТЬ: <полный путь></code> по строкам или ровно «НОВЫХ ЗАПИСОК НЕТ».</li>
+<li><code>_index_nodes_by_path()</code> — <code>file_path -> [nodes]</code> из docstore (O(N), узлы сортируются по <code>start_char_idx</code>).</li>
 <li><code>_assemble_document_text(path, nodes)</code> — полный текст через start_char_idx, перекрытия (<code>chunk_overlap</code>) вырезаются. Файлы повторно не парсятся, Word COM не задействуется.</li>
 </ul>
 <h3>Управление конфигом во время работы</h3>
-<p><code>update_config(**kwargs) -&gt; {"changed": [...]}</code>:
-- смена <code>provider</code> без явного <code>url</code> → подставляет <code>DEFAULT_URLS[новый provider]</code>, если url был дефолтом старого;
-- <code>chunk_size/chunk_overlap</code> → обновляет node_parser;
-- <code>restart_index</code> при изменении <code>chunk_size, chunk_overlap, llm_embed, embedding_dim</code> → <code>start_sync(is_remove=True)</code> (пересоздание индекса!);
-- <code>restart_llm</code> при <code>llm, llm_embed, llm_keywords, provider, url, api_key</code> → <code>__init_backend()</code> + <code>__check_backend()</code>;
-- <code>_autofix_models_for_provider(kwargs)</code> — если бэкенд ответил и пользователь не указывал модель явно, подставляет первую доступную thinking/embedding модель.</p>
+<p><code>update_config(**kwargs) -> {"changed": [...]}</code>:</p>
+<ul>
+<li>смена <code>provider</code> без явного <code>url</code> → подставляет <code>DEFAULT_URLS[новый provider]</code>, если url был дефолтом старого;</li>
+<li><code>chunk_size/chunk_overlap</code> → обновляет node_parser;</li>
+<li><code>restart_index</code> при изменении <code>chunk_size, chunk_overlap, llm_embed, embedding_dim</code> → <code>start_sync(is_remove=True)</code> (пересоздание индекса!);</li>
+<li><code>restart_llm</code> при <code>llm, llm_embed, llm_keywords, provider, url, api_key</code> → <code>__init_backend()</code> + <code>__check_backend()</code>;</li>
+<li><code>_autofix_models_for_provider(kwargs)</code> — если бэкенд ответил и пользователь не указывал модель явно, подставляет первую доступную thinking/embedding модель.</li>
+</ul>
 <h3>Статус и метаданные</h3>
 <ul>
 <li><code>get_status()</code> — <code>is_initialized, is_syncing, status, progress, status_backend, document_count, sync_files, index_updated, version</code>.</li>
@@ -242,8 +158,7 @@
 <p>См. полное описание API в документе <code>04-api-core.md</code>. Запуск:</p>
 <pre><code class="language-python">if __name__ == &quot;__main__&quot;:
     engine.initialize()
-    app.run(debug=False, host=&quot;0.0.0.0&quot;, port=11455, use_reloader=False)
-</code></pre>
+    app.run(debug=False, host=&quot;0.0.0.0&quot;, port=11455, use_reloader=False)</code></pre>
 </main>
 <footer>Сгенерировано из <code>doc/*.md</code> — при правках редактируйте markdown, затем перегенерируйте doc_html.</footer>
 </body>

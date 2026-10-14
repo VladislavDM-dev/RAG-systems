@@ -121,12 +121,8 @@ flowchart TD
 
 ```mermaid
 flowchart LR
-    A["prompt по теме"] --> B["Извлечь корни слов темы\n(_memo_topic_words)"]
-    B --> C["Гибридный отбор кандидатов"]
-    C --> D1["Имя-фильтр: файлы, в названии которых есть корни\n(идут первыми, полными чанками)"]
-    C --> D2["Семантический ретрив: retriever.retrieve(prompt)\n(доки по смыслу, не отражённые в имени)"]
-    D1 --> E["candidate_pairs: [(file_path, node)]"]
-    D2 --> E
+    A["prompt по теме"] --> B["Семантический ретрив\nretriever.retrieve(prompt)"]
+    B --> E["candidate_pairs: [(file_path, node)]"]
     E --> F{"for page in 1..max_pages"}
     F -->|батч page_size чанков| G["Батч-LLM (stream_chat)\nс системным промптом _MEMO_BATCH_SYSTEM_PROMPT"]
     G --> H["reasoning стримится пользователю"]

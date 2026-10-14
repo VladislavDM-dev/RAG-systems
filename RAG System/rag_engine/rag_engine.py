@@ -50,15 +50,6 @@ _MEMO_BATCH_SYSTEM_PROMPT = (
 )
 
 
-# Служебные слова запроса, которые не несут тему и не должны отсекать узлы.
-_MEMO_STOP_WORDS = frozenset({
-    "найди", "найти", "покажи", "поиск", "записки", "записку", "записка",
-    "запискам", "служебные", "служебки", "служебную", "служебная", "закупке",
-    "принадлежностей", "принадлежности", "все", "всех", "по", "про", "о",
-    "об", "теме", "тематика", "связанные", "связанных", "релевантные",
-})
-
-
 def _count_tokens(*texts: str) -> int:
     """Оценка количества токенов через tiktoken (cl100k_base).
 
@@ -86,40 +77,6 @@ def _count_tokens(*texts: str) -> int:
     return total
 
 
-def _memo_topic_words(prompt: str) -> List[str]:
-    """Извлекает значимые слова темы из запроса для предварительного фильтра.
-
-    Слова длиннее 3 символов, очищенные от служебных стоп-слов. Для каждого
-    слова хранится его первый корень (до 5 символов) — чтобы отсекать узлы
-    по имени файла (там слова в падежной форме: «канцелярск» + «канцелярских»).
-    Возвращает уникальные корни в порядке появления в запросе.
-    """
-    words = re.findall(r"[А-Яа-яЁё]{4,}", (prompt or "").lower())
-    roots = []
-    seen = set()
-    for w in words:
-        if w in _MEMO_STOP_WORDS:
-            continue
-        root = w[:5]
-        if root not in seen:
-            seen.add(root)
-            roots.append(root)
-    return roots
-
-
-def _memo_file_match(file_name: str, topic_roots: List[str]) -> bool:
-    """True, если имя файла содержит корень хотя бы одного слова темы.
-
-    Сравнение по подстроке корня (без учёта падежей): имя файла записок
-    «#297-2026.03.01-О закупке канцелярских принадлежностей.docx» содержит
-    корни «закуп», «канцеляр», «принадлеж». Это дешёвый предфильтр до LLM.
-    """
-    if not topic_roots:
-        return True
-    name = (file_name or "").lower()
-    return any(r in name for r in topic_roots)
-
-
 class _ExcludeNodeIdsPostprocessor(BaseNodePostprocessor):
     """Postprocessor: выкидывает из ретрива узлы, уже отданные ранее.
 
@@ -142,7 +99,7 @@ class _ExcludeNodeIdsPostprocessor(BaseNodePostprocessor):
 class RAGEngine:
     """RAG-движок: индексация документов и поиск по ним."""
 
-    VERSION = "26.10.13"
+    VERSION = "26.10.14"
 
     def __init__(self, config: Optional[Settings] = None):
         self.cfg = config or Settings()
@@ -697,31 +654,12 @@ class RAGEngine:
         total_tokens_out = 0
         total_llm_time = 0.0
 
-        # Гибридный отбор кандидатов (без LLM):
-        #  1) имя-фильтр — файлы, чьё название содержит слова темы (надёжный
-        #     признак для записок «О ...»), идут первыми, полными чанками;
-        #  2) семантический ретрив — темы, которые есть по смыслу, но не
-        #     отражены в имени (например «О выделении средств» про канцелярию),
-        #     добавляются в том порядке, в котором их вернул ретрив (лучшее
-        #     первым, сортировать по score вручную не нужно — у Faiss это
-        #     расстояние, а не сходство).
-        topic_roots = _memo_topic_words(prompt)
+        # Отбор кандидатов — только семантический ретрив (по содержимому).
+        # Имя файла не участвует: иначе возможны потери, если тема не
+        # отражена в названии документа.
         by_path = self._index_nodes_by_path()
         seen_order = set()
         candidate_pairs = []  # [(file_path, node)] — порядок обхода батчей
-
-        if topic_roots:
-            name_matched = []
-            for fp, nds in by_path.items():
-                if _memo_file_match(os.path.basename(fp) or fp, topic_roots):
-                    name_matched.append((fp, nds))
-            name_matched.sort(key=lambda t: t[0].lower())
-            for fp, nds in name_matched:
-                for nd in nds:
-                    if nd.node_id in seen_order:
-                        continue
-                    seen_order.add(nd.node_id)
-                    candidate_pairs.append((fp, nd))
 
         try:
             retriever = self.index.as_retriever(

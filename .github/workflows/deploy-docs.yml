@@ -1,0 +1,39 @@
+name: Deploy docs to GitHub Pages
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "doc/**"
+      - "doc_html/**"
+      - ".github/workflows/deploy-docs.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Assemble site (doc_html + markdown sources)
+        run: |
+          mkdir -p _site/md
+          cp -r doc_html/. _site/
+          cp doc/*.md _site/md/
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+      - id: deployment
+        uses: actions/deploy-pages@v4

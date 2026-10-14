@@ -13,19 +13,19 @@
 <p>Репозиторий из двух Python-проектов: ядро RAG (Flask API, порт 11455, префикс /rag) и веб-интерфейс (Flask Web UI). Здесь собрано полное описание: архитектура, API, схема БД, мастер служебной записки, установка, тесты, сборка, troubleshooting и соглашения по git. Все страницы — HTML-версии файлов из папки <code>doc/</code>; диаграммы Mermaid рендерятся в браузере.</p>
 <table class="index">
 <tr><th>Раздел</th><th>Файл .md</th><th>Описание</th></tr>
-<tr><td><a href="00-README.html">00. Обзор</a></td><td><code>doc/00-README.md</code></td><td>Индекс, сводка, версии движка и Web UI</td></tr>
-<tr><td><a href="01-architecture.html">01. Архитектура</a></td><td><code>doc/01-architecture.md</code></td><td>Верхнеуровневая схема, потоки чата/записок, ER-диаграмма</td></tr>
-<tr><td><a href="02-core-rag-system.html">02. Ядро RAG System</a></td><td><code>doc/02-core-rag-system.md</code></td><td>Settings, providers, парсеры, RAGEngine, app.py</td></tr>
-<tr><td><a href="03-web-ui.html">03. RAG System Web UI</a></td><td><code>doc/03-web-ui.md</code></td><td>Фабрика приложения, config, chat/memo/admin, фронтенд</td></tr>
-<tr><td><a href="04-api-core.html">04. API ядра</a></td><td><code>doc/04-api-core.md</code></td><td>Все endpoints /rag/* (JSON + SSE)</td></tr>
-<tr><td><a href="05-api-webui.html">05. API Web UI</a></td><td><code>doc/05-api-webui.md</code></td><td>Все endpoints /api/* + формы</td></tr>
-<tr><td><a href="06-database.html">06. Схема БД</a></td><td><code>doc/06-database.md</code></td><td>users/conversations/messages/favorites/memo_states</td></tr>
-<tr><td><a href="07-memo-wizard.html">07. Мастер /create</a></td><td><code>doc/07-memo-wizard.md</code></td><td>Генерация вариантов, поля, шаблон mmo.dotx</td></tr>
-<tr><td><a href="08-installation.html">08. Установка и запуск</a></td><td><code>doc/08-installation.md</code></td><td>venv, settings.json, запуск, env-переменные</td></tr>
-<tr><td><a href="09-testing.html">09. Тестирование</a></td><td><code>doc/09-testing.md</code></td><td>pytest ядра и Web UI, проверка JS</td></tr>
-<tr><td><a href="10-build.html">10. Сборка</a></td><td><code>doc/10-build.md</code></td><td>PyInstaller build.spec для обоих проектов</td></tr>
-<tr><td><a href="11-troubleshooting.html">11. Troubleshooting</a></td><td><code>doc/11-troubleshooting.md</code></td><td>Бэкенд/Word COM/Web UI/frozen/индекс</td></tr>
-<tr><td><a href="12-git-and-conventions.html">12. Git и соглашения</a></td><td><code>doc/12-git-and-conventions.md</code></td><td>Коммиты, .gitignore, конвенции кода</td></tr>
+<tr><td><a href="00-README.html">00. Обзор</a></td><td><a href="md/00-README.md"><code>doc/00-README.md</code></a></td><td>Индекс, сводка, версии движка и Web UI</td></tr>
+<tr><td><a href="01-architecture.html">01. Архитектура</a></td><td><a href="md/01-architecture.md"><code>doc/01-architecture.md</code></a></td><td>Верхнеуровневая схема, потоки чата/записок, ER-диаграмма</td></tr>
+<tr><td><a href="02-core-rag-system.html">02. Ядро RAG System</a></td><td><a href="md/02-core-rag-system.md"><code>doc/02-core-rag-system.md</code></a></td><td>Settings, providers, парсеры, RAGEngine, app.py</td></tr>
+<tr><td><a href="03-web-ui.html">03. RAG System Web UI</a></td><td><a href="md/03-web-ui.md"><code>doc/03-web-ui.md</code></a></td><td>Фабрика приложения, config, chat/memo/admin, фронтенд</td></tr>
+<tr><td><a href="04-api-core.html">04. API ядра</a></td><td><a href="md/04-api-core.md"><code>doc/04-api-core.md</code></a></td><td>Все endpoints /rag/* (JSON + SSE)</td></tr>
+<tr><td><a href="05-api-webui.html">05. API Web UI</a></td><td><a href="md/05-api-webui.md"><code>doc/05-api-webui.md</code></a></td><td>Все endpoints /api/* + формы</td></tr>
+<tr><td><a href="06-database.html">06. Схема БД</a></td><td><a href="md/06-database.md"><code>doc/06-database.md</code></a></td><td>users/conversations/messages/favorites/memo_states</td></tr>
+<tr><td><a href="07-memo-wizard.html">07. Мастер /create</a></td><td><a href="md/07-memo-wizard.md"><code>doc/07-memo-wizard.md</code></a></td><td>Генерация вариантов, поля, шаблон mmo.dotx</td></tr>
+<tr><td><a href="08-installation.html">08. Установка и запуск</a></td><td><a href="md/08-installation.md"><code>doc/08-installation.md</code></a></td><td>venv, settings.json, запуск, env-переменные</td></tr>
+<tr><td><a href="09-testing.html">09. Тестирование</a></td><td><a href="md/09-testing.md"><code>doc/09-testing.md</code></a></td><td>pytest ядра и Web UI, проверка JS</td></tr>
+<tr><td><a href="10-build.html">10. Сборка</a></td><td><a href="md/10-build.md"><code>doc/10-build.md</code></a></td><td>PyInstaller build.spec для обоих проектов</td></tr>
+<tr><td><a href="11-troubleshooting.html">11. Troubleshooting</a></td><td><a href="md/11-troubleshooting.md"><code>doc/11-troubleshooting.md</code></a></td><td>Бэкенд/Word COM/Web UI/frozen/индекс</td></tr>
+<tr><td><a href="12-git-and-conventions.html">12. Git и соглашения</a></td><td><a href="md/12-git-and-conventions.md"><code>doc/12-git-and-conventions.md</code></a></td><td>Коммиты, .gitignore, конвенции кода</td></tr>
 </table>
 </main>
 <footer>Сгенерировано из <code>doc/*.md</code>.</footer>

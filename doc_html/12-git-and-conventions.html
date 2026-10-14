@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>12. Git и соглашения · RAG System Docs</title>
+<link rel="stylesheet" href="style.css">
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+<script>
+  window.addEventListener('DOMContentLoaded', function () {
+    if (window.mermaid) {
+      mermaid.initialize({ startOnLoad: true, theme: 'base',
+        themeVariables: { 'fontSize': '14px', 'primaryColor': '#eef4ff',
+          'primaryBorderColor': '#9cb4e8', 'lineColor': '#5b6b8c' } });
+    }
+  });
+</script>
+</head>
+<body>
+<nav class="topnav">
+  <a class="navtitle" href="index.html">RAG System Docs</a>
+  <a href="00-README.html">00.</a> <a href="01-architecture.html">01.</a> <a href="02-core-rag-system.html">02.</a> <a href="03-web-ui.html">03.</a> <a href="04-api-core.html">04.</a> <a href="05-api-webui.html">05.</a> <a href="06-database.html">06.</a> <a href="07-memo-wizard.html">07.</a> <a href="08-installation.html">08.</a> <a href="09-testing.html">09.</a> <a href="10-build.html">10.</a> <a href="11-troubleshooting.html">11.</a> <span class="cur">12.</span>
+</nav>
+<header class="pagetitle">
+  <h1>12. Git и соглашения</h1>
+  <p class="srcnote">Исходник: <code>doc/12-git-and-conventions.md</code> · Mermaid-диаграммы рендерятся браузером (CDN); при отключённом JS показан код диаграммы.</p>
+</header>
+<main>
+<h1>12. Git и соглашения проекта</h1>
+<h2>12.1 Структура репозитория</h2>
+<pre><code>C:\Scripts\RAG systems\
+├── .git/
+├── .gitignore                      # корневой (см. ниже)
+├── AGENTS.md                       # инструкции для ИИ-агентов
+├── build_all.ps1                   # сборка обоих проектов (PyInstaller)
+├── generate_memos.py               # перегенерация корпуса out/ (Word COM)
+├── docx_templates/mmo.dotx         # шаблон служебки (бинарный, в git)
+├── out/                            # корпус (gitignored)
+├── RAG System/                     # ядро (свой venv)
+└── RAG System Web UI/              # Web UI (свой venv)
+</code></pre>
+<h2>12.2 Правила коммитов</h2>
+<ul>
+<li>Сообщения <strong>на английском</strong>.</li>
+<li>Префиксы типов: <code>feat:</code>, <code>fix:</code>, реже <code>docs:</code>, <code>refactor:</code>, <code>chore:</code>, <code>test:</code>.</li>
+<li>Стиль — по <code>git log --oneline</code>, кратко и по делу:</li>
+</ul>
+<pre><code class="language-text">feat: add memo wizard variants to /create flow
+fix: restore , &quot;chat&quot; via m56 (2025)
+</code></pre>
+<ul>
+<li><strong>Не</strong> делать <code>git push --force</code>, <code>git commit --amend</code>, пустые коммиты без явного запроса.</li>
+<li>Никогда не коммитить (см. <code>.gitignore</code>):</li>
+<li><code>RAG System Web UI/data/</code> (<code>app.db</code>, <code>secret_key</code>) — пользовательские данные;</li>
+<li><code>users.json</code> — если появится созданный при регистрации (вконце админ-панели) — локальные данные;</li>
+<li><code>RAG System/rag_engine/settings.json</code> — секреты/локальные пути/<code>api_key</code>;</li>
+<li><code>out/</code> — сгенерированный корпус;</li>
+<li><code>.cache/</code>, <code>.venv/</code>.</li>
+</ul>
+<h2>12.3 <code>.gitignore</code> (корневой)</h2>
+<ul>
+<li><code>out/</code> (уже есть), <code>extracted.txt</code></li>
+<li><code>RAG System Web UI/data/</code>, <code>users.json</code></li>
+<li><code>RAG System/rag_engine/settings.json</code></li>
+<li><code>build/</code>, <code>dist/</code>, <code>installer/Output/</code></li>
+<li><code>.venv/</code>, <code>.cache/</code>, среды, <strong>pycache</strong></li>
+<li><code>*.exe</code> не игнорируется — их не должно быть в дереве исходников</li>
+</ul>
+<h2>12.4 Конвенции кода</h2>
+<ul>
+<li>Python: 4 пробела, Python 3.12; импорты по группам; без лишних абстракций.</li>
+<li><strong>Windows-специфично</strong>: все обращения к Word COM — только через <code>_WORD_LOCK</code> (<code>docx_parser.py</code>), никаких параллельных Word. Не создавать несколько <code>Word.Application</code>.</li>
+<li>Бинарный шаблон <code>mmo.dotx</code> правится в Word: поля/плейсхолдеры — только <code>{{ key }}</code>; после сохранения diff больших бинарных изменений НЕ доверять — сверять со списком плейсхолдеров.</li>
+<li>Файлы в кодировке UTF-8, запуск — с <code>-X utf8</code> (иначе кириллица в <code>.docx</code> бьётся).</li>
+<li>В Web UI при любой правке <code>static/js/*.js</code> (или <code>static/css/*.css</code>) <strong>бампать</strong> <code>MEMO_JS_VERSION</code> — версия подставляется в шаблоны как <code>?v=...</code>.</li>
+</ul>
+<h2>12.5 Типичные workflows</h2>
+<pre><code class="language-powershell">git status
+git log --oneline -10
+git add RAG\ System/app.py RAG\ System/rag_engine/rag_engine.py
+git commit -m &quot;fix: handle empty prompt in agent stream&quot;
+</code></pre>
+<p>Два независимых проекта в одном репо — коммиты не смешивать по проектам без необходимости; при правке и ядра, и UI лучше два коммита.</p>
+<h2>12.6 Синхронизация с реальностью</h2>
+<ul>
+<li><code>AGENTS.md</code> — живой документ «как есть»: путь-запуск, требования к venv, <code>-X utf8</code>, тесты. При изменении поведения обязательно обновляйте его и этот раздел.</li>
+<li>Базу знаний по версии держать синхронно: <code>RAGEngine.VERSION</code> (ядро, <code>rag_engine/rag_engine.py</code>) и <code>MEMO_JS_VERSION</code> (Web UI, <code>config.py</code>) — версии-метки для диагностики версий в логе/браузере.</li>
+</ul>
+</main>
+<footer>Сгенерировано из <code>doc/*.md</code> — при правках редактируйте markdown, затем перегенерируйте doc_html.</footer>
+</body>
+</html>

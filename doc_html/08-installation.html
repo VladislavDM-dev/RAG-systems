@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>08. Установка и запуск · RAG System Docs</title>
+<link rel="stylesheet" href="style.css">
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+<script>
+  window.addEventListener('DOMContentLoaded', function () {
+    if (window.mermaid) {
+      mermaid.initialize({ startOnLoad: true, theme: 'base',
+        themeVariables: { 'fontSize': '14px', 'primaryColor': '#eef4ff',
+          'primaryBorderColor': '#9cb4e8', 'lineColor': '#5b6b8c' } });
+    }
+  });
+</script>
+</head>
+<body>
+<nav class="topnav">
+  <a class="navtitle" href="index.html">RAG System Docs</a>
+  <a href="00-README.html">00.</a> <a href="01-architecture.html">01.</a> <a href="02-core-rag-system.html">02.</a> <a href="03-web-ui.html">03.</a> <a href="04-api-core.html">04.</a> <a href="05-api-webui.html">05.</a> <a href="06-database.html">06.</a> <a href="07-memo-wizard.html">07.</a> <span class="cur">08.</span> <a href="09-testing.html">09.</a> <a href="10-build.html">10.</a> <a href="11-troubleshooting.html">11.</a> <a href="12-git-and-conventions.html">12.</a>
+</nav>
+<header class="pagetitle">
+  <h1>08. Установка и запуск</h1>
+  <p class="srcnote">Исходник: <code>doc/08-installation.md</code> · Mermaid-диаграммы рендерятся браузером (CDN); при отключённом JS показан код диаграммы.</p>
+</header>
+<main>
+<h1>08. Установка, запуск и конфигурация</h1>
+<blockquote>
+<p>Требуется <strong>Windows</strong> (Word COM для <code>.doc</code>/страниц <code>.docx</code>; сгенерированный корпус <code>out/</code> тоже создаётся через Word COM). Без Word тесты парсеров и перегенерация корпуса невозможны.</p>
+</blockquote>
+<h2>8.1 Предварительные условия</h2>
+<ol>
+<li><strong>Python 3.12</strong> (локально проекты работают на системном Python 3.12, PowerShell 5.1).</li>
+<li><strong>Внешний бэкенд инференса</strong> (хотя бы один):
+   - <strong>Ollama</strong> — нативный API, по умолчанию <code>http://127.0.0.1:11434</code>, или
+   - <strong>LM Studio</strong> — запустить локальный сервер (Developer → Start server), URL <code>http://127.0.0.1:1234/v1</code>.
+   - Необходимые модели: <strong>LLM</strong> (для ядра локально <code>qwen3.8-4b-distill</code> / дефолт <code>qwen3:4b</code>), <strong>эмбеддинги</strong> (<code>text-embedding-nomic-embed-text-v1.5</code> / <code>nomic-embed-text-v2-moe:latest</code>), опц. модель ключевых слов.</li>
+<li><strong>Word</strong> (для COM: <code>.doc</code> → <code>.docx</code>, подсчёт страниц <code>.docx</code>) — обязателен при индексации этих форматов.</li>
+<li><strong>ABBYY FineReader 15</strong> (<code>C:\Program Files (x86)\ABBYY FineReader 15\FineCmd.exe</code>) — для OCR <code>.pdf</code>. Без него PDF-файлы обрабатываются с ошибкой.</li>
+</ol>
+<h2>8.2 Создание окружений</h2>
+<p>Каждый проект — <strong>отдельный venv</strong> (системный Python не подходит — нет зависимостей):</p>
+<pre><code class="language-powershell"># Ядро
+python -m venv &quot;C:\Scripts\RAG systems\RAG System\.venv&quot;
+&amp; &quot;C:\Scripts\RAG systems\RAG System\.venv\Scripts\python.exe&quot; -m pip install -r &quot;C:\Scripts\RAG systems\RAG System\requirements.txt&quot;
+
+# Web UI
+python -m venv &quot;C:\Scripts\RAG systems\RAG System Web UI\.venv&quot;
+&amp; &quot;C:\Scripts\RAG systems\RAG System Web UI\.venv\Scripts\python.exe&quot; -m pip install -r &quot;C:\Scripts\RAG systems\RAG System Web UI\requirements.txt&quot;
+</code></pre>
+<blockquote>
+<p>⚠️ <code>requirements.txt</code> Web UI <strong>неполный</strong>: в нём нет <code>python-docx</code>, хотя <code>app.py</code>/<code>memo_docx.py</code> его импортируют. При развёртывании на чистом venv доустановите: <code>pip install python-docx</code>.</p>
+</blockquote>
+<h2>8.3 Настройка ядра</h2>
+<p>Файл <code>RAG System/rag_engine/settings.json</code> (в .gitignore, создаётся/правится автоматически). Пример рабочей конфигурации:</p>
+<pre><code class="language-json">{
+    &quot;api_key&quot;: &quot;&quot;,
+    &quot;chunk_overlap&quot;: 50,
+    &quot;chunk_size&quot;: 256,
+    &quot;context_window&quot;: 32768,
+    &quot;embedding_dim&quot;: 768,
+    &quot;llm&quot;: &quot;qwen3.8-4b-distill&quot;,
+    &quot;llm_embed&quot;: &quot;text-embedding-nomic-embed-text-v1.5&quot;,
+    &quot;llm_keywords&quot;: &quot;qwen3.8-4b-distill&quot;,
+    &quot;page_limit&quot;: 10,
+    &quot;provider&quot;: &quot;lmstudio&quot;,
+    &quot;similarity_top_k&quot;: 10,
+    &quot;size_limit_mb&quot;: 5,
+    &quot;sync_folders&quot;: [&quot;C:\\Scripts\\RAG systems\\out&quot;],
+    &quot;url&quot;: &quot;http://127.0.0.1:1234/v1&quot;
+}
+</code></pre>
+<p>Всё это можно менять и через админку Web UI (или напрямую <code>PATCH /rag/config</code>).</p>
+<blockquote>
+<p>Смена <code>llm_embed</code>/<code>chunk_size</code>/<code>embedding_dim</code> пересоздаёт индекс (reset + персинхронизация).</p>
+</blockquote>
+<h2>8.4 Запуск (порядок важен)</h2>
+<p>Сначала ядро (порт 11455, префикс <code>/rag</code>), потом Web UI:</p>
+<pre><code class="language-powershell">&amp; &quot;C:\Scripts\RAG systems\RAG System\.venv\Scripts\python.exe&quot; -X utf8 app.py
+&amp; &quot;C:\Scripts\RAG systems\RAG System Web UI\.venv\Scripts\python.exe&quot; -X utf8 app.py
+</code></pre>
+<ul>
+<li><code>-X utf8</code> обязателен у обоих (иначе ломается кириллица в <code>.docx</code>).</li>
+<li>Web UI: порт по умолчанию 80 (нужен админ); задайте <code>$env:PORT="5000"</code>, чтобы запустить без прав.</li>
+<li>При первом запуске Web UI создаёт пользователя <code>admin</code> (пароль по умолчанию <code>admin123</code>).</li>
+</ul>
+<p>Доступ:
+- Чат: <code>http://127.0.0.1/</code>
+- Админка: <code>http://127.0.0.1/admin</code>
+- RAG API: <code>http://127.0.0.1:11455/rag</code></p>
+<h2>8.5 Переменные окружения</h2>
+<h3>Ядро</h3>
+<p>Переменных окружения у ядра нет — только <code>rag_engine/settings.json</code>.</p>
+<h3>Web UI</h3>
+<table>
+<thead>
+<tr>
+<th>Переменная</th>
+<th>По умолчанию</th>
+<th>Примечание</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>RAG_API_URL</code></td>
+<td><code>http://127.0.0.1:11455/rag</code></td>
+<td>адрес API ядра</td>
+</tr>
+<tr>
+<td><code>PORT</code></td>
+<td><code>80</code></td>
+<td>порт Web UI</td>
+</tr>
+<tr>
+<td><code>DATABASE_URL</code></td>
+<td><code>sqlite:///&lt;BASE_DIR&gt;/data/app.db</code></td>
+<td>SQLAlchemy URL (в frozen — рядом с exe)</td>
+</tr>
+<tr>
+<td><code>SECRET_KEY</code></td>
+<td>—</td>
+<td>если задан — используется напрямую</td>
+</tr>
+<tr>
+<td><code>SECRET_KEY_FILE</code></td>
+<td><code>data/secret_key</code></td>
+<td>путь к файлу секрета (создаётся при необходимости)</td>
+</tr>
+<tr>
+<td><code>OPEN_REGISTRATION</code></td>
+<td><code>true</code></td>
+<td>разрешить саморегистрацию <code>true/false</code></td>
+</tr>
+<tr>
+<td><code>DEFAULT_ADMIN_PASSWORD</code></td>
+<td><code>admin123</code></td>
+<td>пароль seed-админа</td>
+</tr>
+<tr>
+<td><code>MEMO_TEMPLATE_DIR</code></td>
+<td><code>&lt;корень репо&gt;/docx_templates</code></td>
+<td>каталог <code>mmo.dotx</code> (в frozen — <code>_internal/docx_templates</code>)</td>
+</tr>
+</tbody>
+</table>
+<p>Пример запуска Web UI на порту 5000, ядро на удалённой машине:</p>
+<pre><code class="language-powershell">$env:RAG_API_URL = &quot;http://172.30.99.77:11455/rag&quot;
+$env:PORT = &quot;5000&quot;
+&amp; &quot;C:\Scripts\RAG systems\RAG System Web UI\.venv\Scripts\python.exe&quot; -X utf8 app.py
+</code></pre>
+<h2>8.6 Перегенерация корпуса <code>out/</code> (для тестов ядра)</h2>
+<p>Корпус <code>out/</code> — сгенерированный набор служебок из шаблона <code>mmo.dotx</code> (подставляются разные темы, footer с номерами). Нужен только тестам ядра (<code>test_parse_all_docx_files</code> требует ≥49 файлов).</p>
+<pre><code class="language-powershell">&amp; &quot;C:\Scripts\RAG systems\RAG System\.venv\Scripts\python.exe&quot; -X utf8 generate_memos.py
+</code></pre>
+<p>Требует Word COM (WinWord). Папка <code>out/</code> в <code>.gitignore</code> и в коммиты не попадает.</p>
+<h2>8.7 Типичные ошибки запуска</h2>
+<ul>
+<li><strong>Порт 80 занят / нет прав</strong> → используйте <code>PORT=5000</code>.</li>
+<li><strong><code>tiktoken ValueError: Unknown encoding cl100k_base</code></strong> в frozen-сборке → в <code>build.spec</code> должны быть <code>collect_data_files("tiktoken_ext")</code> (см. документ 10).</li>
+<li><strong>Web UI запустился, но чат пишет «Бэкенд недоступен»</strong> → не запущено ядро/бэкенд; проверьте <code>RAG_API_URL</code>, статус админки.</li>
+<li><strong>Кириллица в .docx ломается</strong> → у обоих приложений запуск без <code>-X utf8</code>.</li>
+</ul>
+</main>
+<footer>Сгенерировано из <code>doc/*.md</code> — при правках редактируйте markdown, затем перегенерируйте doc_html.</footer>
+</body>
+</html>

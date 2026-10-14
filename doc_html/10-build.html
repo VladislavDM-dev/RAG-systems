@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>10. Сборка (PyInstaller) · RAG System Docs</title>
+<link rel="stylesheet" href="style.css">
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+<script>
+  window.addEventListener('DOMContentLoaded', function () {
+    if (window.mermaid) {
+      mermaid.initialize({ startOnLoad: true, theme: 'base',
+        themeVariables: { 'fontSize': '14px', 'primaryColor': '#eef4ff',
+          'primaryBorderColor': '#9cb4e8', 'lineColor': '#5b6b8c' } });
+    }
+  });
+</script>
+</head>
+<body>
+<nav class="topnav">
+  <a class="navtitle" href="index.html">RAG System Docs</a>
+  <a href="00-README.html">00.</a> <a href="01-architecture.html">01.</a> <a href="02-core-rag-system.html">02.</a> <a href="03-web-ui.html">03.</a> <a href="04-api-core.html">04.</a> <a href="05-api-webui.html">05.</a> <a href="06-database.html">06.</a> <a href="07-memo-wizard.html">07.</a> <a href="08-installation.html">08.</a> <a href="09-testing.html">09.</a> <span class="cur">10.</span> <a href="11-troubleshooting.html">11.</a> <a href="12-git-and-conventions.html">12.</a>
+</nav>
+<header class="pagetitle">
+  <h1>10. Сборка (PyInstaller)</h1>
+  <p class="srcnote">Исходник: <code>doc/10-build.md</code> · Mermaid-диаграммы рендерятся браузером (CDN); при отключённом JS показан код диаграммы.</p>
+</header>
+<main>
+<h1>10. Сборка (PyInstaller)</h1>
+<p>Собираются обе программы как <strong>onedir</strong>-EXE в <code>dist/&lt;имя&gt;/</code>. Скрипт сборки — <code>build_all.ps1</code> в корне репозитория (при первом запуске ставит PyInstaller в venv проекта).</p>
+<h2>10.1 Общая механика</h2>
+<div class="mmd"><div class="mermaid">flowchart TD
+    A["build_all.ps1"] --&gt; B["venv\npip install pyinstaller"]
+    B --&gt; C["RAG System: pyinstaller build.spec --distpath dist\\RAG-System"]
+    C --&gt; D["RAG System Web UI: pyinstaller build.spec --distpath dist\\RAG-System-Web-UI"]
+    D --&gt; E["(вручную) Word/ABBYY/FineReader\nне бандлятся"]</div><details class="mmdcode"><summary>Код диаграммы</summary><pre class="diagram">flowchart TD
+    A["build_all.ps1"] --&gt; B["venv\npip install pyinstaller"]
+    B --&gt; C["RAG System: pyinstaller build.spec --distpath dist\\RAG-System"]
+    C --&gt; D["RAG System Web UI: pyinstaller build.spec --distpath dist\\RAG-System-Web-UI"]
+    D --&gt; E["(вручную) Word/ABBYY/FineReader\nне бандлятся"]</pre></details></div>
+<p>После сборки в <code>dist/</code> каталоги: <code>RAG-System/</code> (ядро) и <code>RAG-System-Web-UI/</code> (Web UI). В каждой — <code>_internal/</code> с бинарниками интерпретатора и зависимостей.</p>
+<h2>10.2 Ядро — <code>RAG System/build.spec</code></h2>
+<ul>
+<li><code>Analysis(["app.py"], ...)</code>.</li>
+<li><code>datas = collect_data_files("tiktoken_ext")</code> — <strong>критично</strong>: без них <code>ValueError: Unknown encoding cl100k_base</code> при подсчёте токенов (бинарные таблицы кодировок лежат в пакете <code>tiktoken_ext</code>).</li>
+<li><code>hiddenimports</code>: <code>win32com</code>, <code>win32com.shell</code>, <code>win32com.client</code>, <code>pythoncom</code> (COM для Word/ABBYY).</li>
+<li><code>hook_runtime.py</code> — <code>runtime_hooks</code>: перенастраивает <code>sys.stdout/-stderr</code> на UTF-8 (нативно вывод exe в cp1251, <code>-X utf8</code> у exe не задать).</li>
+<li><strong>Frozen-поведение</strong>: <code>config_dir()</code> и cache_dir смотрят рядом с exe, т.е. <code>settings.json</code> и <code>.cache/</code> кладутся в <code>dist/RAG-System/</code>, а не в исходники.</li>
+</ul>
+<h2>10.3 Web UI — <code>RAG System Web UI/build.spec</code></h2>
+<ul>
+<li><code>Analysis(["app.py"], ...)</code>.</li>
+<li><code>datas</code>: папка <code>templates/</code>, <code>static/</code>, и <code>("../docx_templates/mmo.dotx", "docx_templates")</code> — шаблон попадает в <code>&lt;exe_dir&gt;/_internal/docx_templates/mmo.dotx</code>.</li>
+<li><code>hook_runtime.py</code> выставляет env для frozen-режима:</li>
+<li><code>MEMO_TEMPLATE_DIR = &lt;exe_dir&gt;/_internal/docx_templates</code>,</li>
+<li><code>DATABASE_URL = sqlite:///&lt;exe_dir&gt;/data/app.db</code>,</li>
+<li><code>SECRET_KEY_FILE = &lt;exe_dir&gt;/data/secret_key</code>.</li>
+<li><strong>Данные пишутся рядом с exe</strong> (не в <code>_internal</code>): <code>data/app.db</code>, <code>data/secret_key</code>.</li>
+<li>Корпус <code>out/</code> <strong>не бандлится</strong>: Web UI работает только через RAG API.</li>
+<li><code>hiddenimports</code>: <code>docx</code>, <code>win32com.client</code> (для <code>memo_docx</code> / экспортных путей).</li>
+</ul>
+<h2>10.4 Порядок запуска собранных версий</h2>
+<ol>
+<li>Запустить ядро <code>dist\RAG-System\RAG_SR.exe</code> (или аналогичное имя exe).</li>
+<li>Запустить <code>dist\RAG-System-Web-UI\...exe</code>. Web UI по умолчанию ждёт ядро на <code>http://127.0.0.1:11455/rag</code>.</li>
+</ol>
+<h2>10.5 Пост-сборочные проверки (ручные)</h2>
+<ul>
+<li><code>test_parse_all_docx_files</code> против собранного ядра не гоняется (COMDistributed) — проверяется выборочно один файл.</li>
+<li>Обязательно проверить: <code>settings.json</code> появился рядом с exe ядра; <code>data/app.db</code> создана у Web UI на первом запуске; скачивание <code>.docx</code> служебной записки работает (проверка <code>_internal\docx_templates\mmo.dotx</code>).</li>
+<li>Пропуск в сборке <code>python-docx</code> нельзя детектить по requirements (его там нет) — только ручной тест генерации <code>.docx</code>.</li>
+</ul>
+<h2>10.6 Известные «подводные камни»</h2>
+<ul>
+<li>Версии <code>build.spec</code> синхронно с кодом не версионируются — после сноса зависимостей наберите в консоли ядра <code>rag_engine/rag_engine.py</code> версию (<code>VERSION</code>).</li>
+<li>Смена путей в <code>rag_engine/</code> (config_dir, cache_dir) после пересборки может ломать <code>test_parse_*</code>, даже если прод-конфиг не трогается.</li>
+<li>Если exe не находит <code>tiktoken_ext</code> — пересобрать с <code>collect_data_files("tiktoken_ext")</code>.</li>
+</ul>
+</main>
+<footer>Сгенерировано из <code>doc/*.md</code> — при правках редактируйте markdown, затем перегенерируйте doc_html.</footer>
+</body>
+</html>

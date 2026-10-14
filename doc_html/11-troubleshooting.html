@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>11. Troubleshooting · RAG System Docs</title>
+<link rel="stylesheet" href="style.css">
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+<script>
+  window.addEventListener('DOMContentLoaded', function () {
+    if (window.mermaid) {
+      mermaid.initialize({ startOnLoad: true, theme: 'base',
+        themeVariables: { 'fontSize': '14px', 'primaryColor': '#eef4ff',
+          'primaryBorderColor': '#9cb4e8', 'lineColor': '#5b6b8c' } });
+    }
+  });
+</script>
+</head>
+<body>
+<nav class="topnav">
+  <a class="navtitle" href="index.html">RAG System Docs</a>
+  <a href="00-README.html">00.</a> <a href="01-architecture.html">01.</a> <a href="02-core-rag-system.html">02.</a> <a href="03-web-ui.html">03.</a> <a href="04-api-core.html">04.</a> <a href="05-api-webui.html">05.</a> <a href="06-database.html">06.</a> <a href="07-memo-wizard.html">07.</a> <a href="08-installation.html">08.</a> <a href="09-testing.html">09.</a> <a href="10-build.html">10.</a> <span class="cur">11.</span> <a href="12-git-and-conventions.html">12.</a>
+</nav>
+<header class="pagetitle">
+  <h1>11. Troubleshooting</h1>
+  <p class="srcnote">Исходник: <code>doc/11-troubleshooting.md</code> · Mermaid-диаграммы рендерятся браузером (CDN); при отключённом JS показан код диаграммы.</p>
+</header>
+<main>
+<h1>11. Troubleshooting</h1>
+<h2>11.1 Бэкенд/индекс</h2>
+<table>
+<thead>
+<tr>
+<th>Симптом</th>
+<th>Причина</th>
+<th>Решение</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Чат: «Бэкенд недоступен» / источники пустые</td>
+<td>Ядро не запущено или <code>RAG_API_URL</code> неверный</td>
+<td>Запустить ядро, проверить <code>http://127.0.0.1:11455/rag/health</code>; в админке — статус бэкенда</td>
+</tr>
+<tr>
+<td>Ядро не отвечает (порт 11455)</td>
+<td>Процесс ядра не стартовал / упал</td>
+<td>Лог ядра; запустить <code>python -X utf8 app.py</code>; проверить, что в <code>settings.json</code> корректный <code>url</code> бэкенда</td>
+</tr>
+<tr>
+<td>Админка показывает «status_backend: false»</td>
+<td>Ollama/LM Studio не запущен или занят другой model</td>
+<td>Запустить бэкенд, в админке нажать проверку моделей</td>
+</tr>
+<tr>
+<td>Ответы «выдуманы», без контекста</td>
+<td><code>similarity_top_k</code> мал, документов в индексе нет, тема далеко от корпуса</td>
+<td>Пересинхронизировать («Сброс + синхронизация»), увеличить контекст/<code>top_k</code></td>
+</tr>
+<tr>
+<td><code>is_syncing: true</code> навсегда</td>
+<td>Папка <code>sync_folders</code> недоступна по сети/вагоне</td>
+<td>Проверить пути папок, сетевые диски (резервирование на линию UNC)</td>
+</tr>
+</tbody>
+</table>
+<h2>11.2 Word COM / парсеры</h2>
+<table>
+<thead>
+<tr>
+<th>Симптом</th>
+<th>Причина</th>
+<th>Решение</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Зависание при индексации <code>.docx</code></td>
+<td>Параллельный вызов Word COM (второй поток/приложение)</td>
+<td>В коде всё сериализовано <code>_WORD_LOCK</code>; не держите открытыми Word вручную во время синхронизации</td>
+</tr>
+<tr>
+<td><code>.doc</code> не парсится</td>
+<td>Нет Word / COM недоступен</td>
+<td>Установить Word; проверить на другом exe-режиме+Word наличие</td>
+</tr>
+<tr>
+<td><code>.pdf</code> не конвертируется</td>
+<td>FineReader 15 не найден (<code>C:\Program Files (x86)\ABBYY FineReader 15\FineCmd.exe</code>)</td>
+<td>Установить ABBYY; путь жёсткий в коде <code>pdf_parser.py</code></td>
+</tr>
+<tr>
+<td>Страницы считаются 0</td>
+<td>Таблица без Word COM… фактически — открыт только через COM; 0 возникает при незакрытых диалогах</td>
+<td>Убедиться, что Word не в «безопасном режиме» и не спросил пользователя</td>
+</tr>
+<tr>
+<td>Кириллица в <code>.docx</code> выходных битая</td>
+<td>Запуск без <code>-X utf8</code></td>
+<td>Всегда <code>python -X utf8 app.py</code>/<code>generate_memos.py</code></td>
+</tr>
+</tbody>
+</table>
+<h2>11.3 Web UI</h2>
+<table>
+<thead>
+<tr>
+<th>Симптом</th>
+<th>Причина</th>
+<th>Решение</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>«Порт 80: требуется администратор»</td>
+<td>Порт 80 слушают только от администратора</td>
+<td><code>$env:PORT="5000"</code> затем <code>app.py</code></td>
+</tr>
+<tr>
+<td><code>POST /api/memo/docx</code> → 500 «Шаблон … не найден»</td>
+<td><code>MEMO_TEMPLATE_DIR</code> указывает не туда; в frozen — нет <code>_internal/docx_templates/mmo.dotx</code></td>
+<td>В frozen: положить <code>/verify _internal\docx_templates\mmo.dotx</code>; в dev: <code>MEMO_TEMPLATE_DIR=&lt;корень&gt;/docx_templates</code></td>
+</tr>
+<tr>
+<td>Браузер держит старый JS</td>
+<td><code>MEMO_JS_VERSION</code> не бампнут</td>
+<td>Поднять версию в <code>config.py</code>(Web UI) и перезапустить</td>
+</tr>
+<tr>
+<td>Нет кнопки «Скачать .docx» (500) — варианты из <code>mmo.dotx</code> без полей</td>
+<td>Шаблон не содержит <code>{{ body }}</code> или битая загрузка</td>
+<td><code>POST /api/admin/memo/template/reload</code>; скачать дефолтный mmo.dotx (deploy)</td>
+</tr>
+<tr>
+<td>Чат недоступен, <code>/</code> крутится</td>
+<td>Фронтенд <code>app.js</code> не стартует из-за JS-ошибки</td>
+<td>F12 → Console; <code>node --check</code> на JS; проверить <code>?v=</code> версии</td>
+</tr>
+<tr>
+<td>Скачанный служебка с пустым <code>{{ body }}</code></td>
+<td>Тело пустое, а шаблон ожидает абзац <code>{{ body }}</code> — это норм, если поле пустое в мастере</td>
+<td>Перед скачиванием заполнить вариант тела</td>
+</tr>
+</tbody>
+</table>
+<h2>11.4 Сборка / frozen</h2>
+<table>
+<thead>
+<tr>
+<th>Симптом</th>
+<th>Причина</th>
+<th>Решение</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ValueError: Unknown encoding cl100k_base</code></td>
+<td>В frozen нет <code>tiktoken_ext</code></td>
+<td><code>build.spec</code>: <code>datas += collect_data_files("tiktoken_ext")</code>; пересобрать</td>
+</tr>
+<tr>
+<td>Мусор в логах консоли exe</td>
+<td>stdout/stderr в cp1251</td>
+<td>В <code>hook_runtime.py</code> переопределить sys.stdout/-stderr на UTF-8</td>
+</tr>
+<tr>
+<td>Web UI frozen не находит БД</td>
+<td><code>DATABASE_URL</code> указывает в <code>_internal</code>, а не рядом с exe</td>
+<td><code>hook_runtime.py</code> должен ставить <code>&lt;exe_dir&gt;</code> (путь к <code>sys.executable</code>, а не <code>_MEIPASS</code>)</td>
+</tr>
+<tr>
+<td>Старая сборка не подхватывает новый шаблон</td>
+<td>Шаблон в <code>_internal</code> старой версии</td>
+<td>Пересобрать Web UI или вручную заменить <code>_internal\docx_templates\mmo.dotx</code></td>
+</tr>
+</tbody>
+</table>
+<h2>11.5 Индекс/кэш</h2>
+<table>
+<thead>
+<tr>
+<th>Симптом</th>
+<th>Причина</th>
+<th>Решение</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Индекс показывает старые файлы после удаления из <code>out/</code></td>
+<td>Удаление файлов сейчас <strong>не детектируется</strong> (<code>deleted=[]</code> в <code>sync_index</code>)</td>
+<td>«Сброс + синхронизация» в админке или удалить <code>.cache/</code> ядра рядом с exe/в cwd</td>
+</tr>
+<tr>
+<td><code>document_count</code> завышен</td>
+<td>В доксторе остались узлы удалённых</td>
+<td>Полный reset sync</td>
+</tr>
+<tr>
+<td>Слишком долгая первая индексация</td>
+<td>Чанкинг+эмбеддинг всех файлов</td>
+<td>Норм при <code>out/</code> из 50 файлов: ~1–3 мин</td>
+</tr>
+</tbody>
+</table>
+</main>
+<footer>Сгенерировано из <code>doc/*.md</code> — при правках редактируйте markdown, затем перегенерируйте doc_html.</footer>
+</body>
+</html>

@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>05. API Web UI · RAG System Docs</title>
+<link rel="stylesheet" href="style.css">
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+<script>
+  window.addEventListener('DOMContentLoaded', function () {
+    if (window.mermaid) {
+      mermaid.initialize({ startOnLoad: true, theme: 'base',
+        themeVariables: { 'fontSize': '14px', 'primaryColor': '#eef4ff',
+          'primaryBorderColor': '#9cb4e8', 'lineColor': '#5b6b8c' } });
+    }
+  });
+</script>
+</head>
+<body>
+<nav class="topnav">
+  <a class="navtitle" href="index.html">RAG System Docs</a>
+  <a href="00-README.html">00.</a> <a href="01-architecture.html">01.</a> <a href="02-core-rag-system.html">02.</a> <a href="03-web-ui.html">03.</a> <a href="04-api-core.html">04.</a> <span class="cur">05.</span> <a href="06-database.html">06.</a> <a href="07-memo-wizard.html">07.</a> <a href="08-installation.html">08.</a> <a href="09-testing.html">09.</a> <a href="10-build.html">10.</a> <a href="11-troubleshooting.html">11.</a> <a href="12-git-and-conventions.html">12.</a>
+</nav>
+<header class="pagetitle">
+  <h1>05. API Web UI</h1>
+  <p class="srcnote">Исходник: <code>doc/05-api-webui.md</code> · Mermaid-диаграммы рендерятся браузером (CDN); при отключённом JS показан код диаграммы.</p>
+</header>
+<main>
+<h1>05. API Web UI (<code>/api/*</code>)</h1>
+<p>Все endpoints требуют <code>login_required</code> (кроме страниц логина/регистрации). CSRF:</p>
+<ul>
+<li><code><form></code>-методы (login/register/logout) требуют <code>csrf_token</code>;</li>
+<li>JSON-endpoints сохранения (POST/PUT/DELETE на <code>chat.py</code>, <code>memo.py</code>, <code>admin.py</code>) помечены <code>@csrf.exempt</code> — но это осознанный выбор проекта (см. AGENTS.md: формы защищены, API-часть отключена).</li>
+</ul>
+<p>Базовые страницы: <code>GET /</code> (чат), <code>GET /admin</code> (админка), <code>GET /login</code>, <code>GET /register</code>.</p>
+<h2>5.1 Чат и стриминг</h2>
+<h3><code>POST /api/chat/stream</code> (SSE)</h3>
+<p>Тело (JSON): <code>prompt</code> (обяз.), опц. <code>system_prompt</code>, <code>top_k</code>, <code>temperature</code>, <code>memos_paged</code>.</p>
+<p><b>Расписание (запрет):</b> источник — ядро (<code>GET /rag/schedule</code>, см. doc/04). Если для пользователя сейчас действует запрет (<code>schedule.py:get_restriction_message()</code> опрашивает ядро; админы не блокируются) → <code>403 {error: "<текст блокировки>", restricted: true}</code> до любых обращений к ядру.</p>
+<p>Ветки:</p>
+<ul>
+<li><code>memos_paged: true</code> → поиск записок (<code>_stream_memos</code>, temperature по умолч. 0.2);</li>
+<li>иначе если клиент не задал <code>system_prompt</code> и <code>detect_memos_topic(prompt)</code> вернул тему → поиск записок (temperature 0.0);</li>
+<li>иначе — обычный RAG-ответ SSE.</li>
+</ul>
+<p>Проксирует события ядра 1:1: <code>sources / reasoning / token / done / error</code>. В <code>done</code> дополнительно: <code>answer, reasoning, sources</code> (дедуплицированы), <code>tokens_in, tokens_out, elapsed</code>. Для ветки записок <code>done</code> содержит <code>documents</code> и <code>answer</code> (сводка из <code>_memos_answer</code>).</p>
+<p>Пример запроса:</p>
+<pre><code class="language-json">{ &quot;prompt&quot;: &quot;Чем занимается отдел закупок?&quot;, &quot;temperature&quot;: 0.3 }</code></pre>
+<h3><code>GET /api/status</code></h3>
+<p>Прокси <code>current_app.rag.index_status()</code> + поля расписания:</p>
+<pre><code class="language-json">{ &quot;is_syncing&quot;: false, &quot;status&quot;: &quot;Готово к работе&quot;, &quot;progress&quot;: 100,
+  &quot;sync_files&quot;: [], &quot;initialized&quot;: true, &quot;document_count&quot;: 53, &quot;index_updated&quot;: &quot;…&quot;,
+  &quot;restricted&quot;: false, &quot;restriction_message&quot;: &quot;&quot; }</code></pre>
+<p><code>restricted: true</code> → клиент не разблокирует инпуты и показывает <code>restriction_message</code> (баннер + статус).</p>
+<h3><code>POST /api/parse</code></h3>
+<p><code>{ "file_path": "…" }</code> → результат <code>rag.parse_file(...)</code>.</p>
+<h2>5.1a Уведомления, обратная связь, пароль</h2>
+<table><tr><th>Метод</th><th>Путь</th><th>Описание</th></tr><tr><td>GET</td><td><code>/api/notifications</code></td><td>незакрытые уведомления <code>{notifications: [{id, text, created_at}]}</code></td></tr><tr><td>POST</td><td><code>/api/notifications/<id>/dismiss</code></td><td>отметить закрытым (клик/крестик); повторный вызов не ошибка</td></tr><tr><td>POST</td><td><code>/api/feedback</code></td><td><code>{text}</code> (≤2000 симв.) → сообщение администратору об ошибке</td></tr><tr><td>POST</td><td><code>/api/password</code></td><td><code>{current_password, new_password}</code> → смена собственного пароля (любой вошедший)</td></tr><tr><td>GET</td><td><code>/api/schedule</code></td><td>дата/время сервера + окна запрета: <code>{server_time, server_time_hm, weekday, restricted, restriction_message, restrictions: [{days, start_time, end_time, message, active, applies_now}]}</code></td></tr></table>
+<h2>5.2 Диалоги</h2>
+<table><tr><th>Метод</th><th>Путь</th><th>Описание</th></tr><tr><td>GET</td><td><code>/api/conversations?page=&per_page=</code></td><td>список (по <code>updated_at desc</code>, пагинация по 50)</td></tr><tr><td>POST</td><td><code>/api/conversations</code></td><td>создать <code>{title}</code> → <code>{ok, conversation}</code></td></tr><tr><td>GET</td><td><code>/api/conversations/<id></code></td><td>диалог + все <code>messages</code> (права владельца)</td></tr><tr><td>PUT</td><td><code>/api/conversations/<id></code></td><td>переименовать <code>{title}</code></td></tr><tr><td>DELETE</td><td><code>/api/conversations/<id></code></td><td>удалить (каскадно сообщения)</td></tr></table>
+<p>При доступе к чужому диалогу — <code>404</code> (first_or_404 с фильтром user_id).</p>
+<h2>5.3 Сообщения</h2>
+<h3><code>POST /api/messages</code></h3>
+<pre><code class="language-json">{
+  &quot;conversation_id&quot;: 1,
+  &quot;role&quot;: &quot;user|bot&quot;,
+  &quot;content&quot;: &quot;…&quot;,
+  &quot;sources&quot;: [...],      // опц., сохраняется JSON в sources_json
+  &quot;memo_data&quot;: [...],    // опц., сохраняется в memo_data_json
+  &quot;skip_touch&quot;: false    // true — не обновлять updated_at диалога
+}</code></pre>
+<p>→ <code>{ok, message}</code>.</p>
+<h2>5.4 Избранное</h2>
+<table><tr><th>Метод</th><th>Путь</th><th>Описание</th></tr><tr><td>GET</td><td><code>/api/favorites?page=&per_page=</code></td><td>список</td></tr><tr><td>POST</td><td><code>/api/favorites</code></td><td><code>{title, content, sources, memo_data}</code></td></tr><tr><td>DELETE</td><td><code>/api/favorites/<id></code></td><td>удалить избранное</td></tr></table>
+<h2>5.5 Мастер служебной записки</h2>
+<table><tr><th>Метод</th><th>Путь</th><th>Описание</th></tr><tr><td>GET</td><td><code>/api/memo/template</code></td><td>поля шаблона <code>{fields: [{key,label,hint}], path, updated}</code></td></tr><tr><td>GET</td><td><code>/api/memo/state</code></td><td>состояние мастера пользователя <code>{state: {...}}</code></td></tr><tr><td>POST</td><td><code>/api/memo/state</code></td><td>сохранить <code>{state}</code> (JSON)</td></tr><tr><td>DELETE</td><td><code>/api/memo/state</code></td><td>очистить состояние</td></tr><tr><td>POST</td><td><code>/api/memo/docx</code></td><td>собрать <code>.docx</code>: тело = сами поля (<code>{recipient_position, body, ...}</code>) → <code><file> sluzhebnaya_zapiska.docx</code></td></tr></table>
+<p><code>POST /api/memo/docx</code> возвращает бинарный <code>.docx</code> (mime <code>application/vnd.openxmlformats-officedocument.wordprocessingml.document</code>). Ошибки: <code>{error}</code> + 500 (в т.ч. если шаблон не найден).</p>
+<h2>5.6 Админка (только роль <code>admin</code>)</h2>
+<table><tr><th>Метод</th><th>Путь</th><th>Описание</th></tr><tr><td>GET</td><td><code>/api/admin/info</code></td><td>статус (версия, документы, index_updated, backend, provider, синхронизация)</td></tr><tr><td>GET</td><td><code>/api/admin/config</code></td><td>конфиг RAG</td></tr><tr><td>PATCH</td><td><code>/api/admin/config</code></td><td>обновить (те же ключи, что <code>PATCH /rag/config</code>)</td></tr><tr><td>POST</td><td><code>/api/admin/config/reset</code></td><td>сброс + пересинхронизация</td></tr><tr><td>GET</td><td><code>/api/admin/models</code></td><td>модели бэкенда</td></tr><tr><td>GET/POST</td><td><code>/api/admin/provider</code></td><td>провайдер</td></tr><tr><td>GET/POST</td><td><code>/api/admin/folders</code></td><td>папки синхронизации</td></tr><tr><td>POST</td><td><code>/api/admin/sync</code></td><td><code>{reset}</code> → запуск синхронизации</td></tr><tr><td>GET/POST</td><td><code>/api/admin/users</code></td><td>список / создать пользователя</td></tr><tr><td>DELETE</td><td><code>/api/admin/users/<uid></code></td><td>удалить (без админов!)</td></tr><tr><td>PUT</td><td><code>/api/admin/users/<uid>/password</code></td><td>сменить пароль</td></tr><tr><td>POST</td><td><code>/api/admin/memo/template/reload</code></td><td>перечитать шаблон mmo.dotx</td></tr><tr><td>POST</td><td><code>/api/admin/memo/template</code></td><td>загрузить новый <code>.dotx</code> (multipart <code>file</code>)</td></tr><tr><td>GET/POST</td><td><code>/api/admin/schedule</code></td><td><b>прокси ядра</b> <code>/rag/schedule</code>: список / создать <code>{days:[0..6], start_time, end_time, message, active?}</code></td></tr><tr><td>PUT/DELETE</td><td><code>/api/admin/schedule/<rid></code></td><td><b>прокси ядра</b>: обновить (частичный, напр. <code>{active}</code>) / удалить</td></tr><tr><td>GET/POST</td><td><code>/api/admin/notifications</code></td><td>список / создать <code>{text}</code></td></tr><tr><td>DELETE</td><td><code>/api/admin/notifications/<nid></code></td><td>удалить (вместе с отметками о закрытии)</td></tr><tr><td>GET</td><td><code>/api/admin/messages</code></td><td>сообщения пользователей (непрочитанные сверху)</td></tr><tr><td>POST</td><td><code>/api/admin/messages/<mid>/read</code></td><td><code>{is_read}</code> — отметить прочитанным/нет</td></tr><tr><td>DELETE</td><td><code>/api/admin/messages/<mid></code></td><td>удалить сообщение</td></tr></table>
+<p>Не-админ → <code>403 {error}</code>.</p>
+<p>Валидация расписания живёт в ядре (<code>rag_engine/schedule.py</code>): <code>days</code> — непустой список 0..6 (0=Пн); <code>start_time</code>/<code>end_time</code> — <code>HH:MM</code>; <code>message</code> — непустой текст блокировки. <code>start == end</code> — запрет на весь день; диапазон через полночь поддерживается. Ошибки валидации ядра Web UI возвращает как 400.</p>
+<h2>5.7 Итоговая таблица форм-страниц</h2>
+<table><tr><th>Метод</th><th>Путь</th><th>Примечание</th></tr><tr><td>GET/POST</td><td><code>/login</code></td><td>форма + вход</td></tr><tr><td>GET/POST</td><td><code>/register</code></td><td>регистрация (если <code>OPEN_REGISTRATION</code>)</td></tr><tr><td>POST</td><td><code>/logout</code></td><td>выход</td></tr><tr><td>GET</td><td><code>/</code></td><td>чат (SPA)</td></tr><tr><td>GET</td><td><code>/admin</code></td><td>админ-панель</td></tr></table>
+</main>
+<footer>Сгенерировано из <code>doc/*.md</code> — при правках редактируйте markdown, затем перегенерируйте doc_html.</footer>
+</body>
+</html>

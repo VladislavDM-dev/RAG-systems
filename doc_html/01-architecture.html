@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>01. Архитектура · RAG System Docs</title>
+<link rel="stylesheet" href="style.css">
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+<script>
+  window.addEventListener('DOMContentLoaded', function () {
+    if (window.mermaid) {
+      mermaid.initialize({ startOnLoad: true, theme: 'base',
+        themeVariables: { 'fontSize': '14px', 'primaryColor': '#eef4ff',
+          'primaryBorderColor': '#9cb4e8', 'lineColor': '#5b6b8c' } });
+    }
+  });
+</script>
+</head>
+<body>
+<nav class="topnav">
+  <a class="navtitle" href="index.html">RAG System Docs</a>
+  <a href="00-README.html">00.</a> <span class="cur">01.</span> <a href="02-core-rag-system.html">02.</a> <a href="03-web-ui.html">03.</a> <a href="04-api-core.html">04.</a> <a href="05-api-webui.html">05.</a> <a href="06-database.html">06.</a> <a href="07-memo-wizard.html">07.</a> <a href="08-installation.html">08.</a> <a href="09-testing.html">09.</a> <a href="10-build.html">10.</a> <a href="11-troubleshooting.html">11.</a> <a href="12-git-and-conventions.html">12.</a>
+</nav>
+<header class="pagetitle">
+  <h1>01. Архитектура</h1>
+  <p class="srcnote">Исходник: <code>doc/01-architecture.md</code> · Mermaid-диаграммы рендерятся браузером (CDN); при отключённом JS показан код диаграммы.</p>
+</header>
+<main>
+<h1>01. Архитектура</h1>
+<h2>1.1 Обзор</h2>
+<p>Система — классический RAG-стек (Retrieval-Augmented Generation): документы индексируются в векторную базу, по запросу извлекаются релевантные фрагменты, и LLM формирует ответ с опорой только на них.</p>
+<div class="mmd"><div class="mermaid">flowchart LR
+    subgraph Client["Клиент"]
+        B["Браузер (SPA)\nchat/index.html + JS"]
+    end
+
+    subgraph WebUI["RAG System Web UI (Flask, :80/:PORT)"]
+        AUTH["auth: /login /register"]
+        CHAT["chat: / /api/chat/stream\nмастер /create, /memos"]
+        MEMO["memo: /api/memo/template\n/api/memo/docx"]
+        ADM["admin: /admin /api/admin/*"]
+        DB_[(SQLite:\ndata/app.db)]
+    end
+
+    subgraph Core["RAG System (Flask, :11455, /rag)"]
+        API["app.py\nREST + SSE"]
+        ENG["RAGEngine\nLlamaIndex"]
+        FAISS[("FAISS\nиндекс + docstore")]
+        PARS["Парсеры\n.docx / .doc / .pdf"]
+    end
+
+    subgraph Backend["Инференс"]
+        OLL["Ollama\n:11434"]
+        LMS["LM Studio\n:1234/v1"]
+    end
+
+    B --&gt;|HTTP/SSE| WebUI
+    WebUI --&gt;|RAGClient\nhttp://127.0.0.1:11455/rag| API
+    API --&gt; ENG
+    ENG --&gt; FAISS
+    ENG --&gt;|embed / llm| Backend
+    ENG --&gt; PARS
+    PARS --&gt;|"файлы из sync_folders"| DOCS["Корпус документов\n(напр. C:\Scripts\RAG systems\out)"]
+
+    ADM --&gt; DB_
+    CHAT --&gt; DB_</div><details class="mmdcode"><summary>Код диаграммы</summary><pre class="diagram">flowchart LR
+    subgraph Client["Клиент"]
+        B["Браузер (SPA)\nchat/index.html + JS"]
+    end
+
+    subgraph WebUI["RAG System Web UI (Flask, :80/:PORT)"]
+        AUTH["auth: /login /register"]
+        CHAT["chat: / /api/chat/stream\nмастер /create, /memos"]
+        MEMO["memo: /api/memo/template\n/api/memo/docx"]
+        ADM["admin: /admin /api/admin/*"]
+        DB_[(SQLite:\ndata/app.db)]
+    end
+
+    subgraph Core["RAG System (Flask, :11455, /rag)"]
+        API["app.py\nREST + SSE"]
+        ENG["RAGEngine\nLlamaIndex"]
+        FAISS[("FAISS\nиндекс + docstore")]
+        PARS["Парсеры\n.docx / .doc / .pdf"]
+    end
+
+    subgraph Backend["Инференс"]
+        OLL["Ollama\n:11434"]
+        LMS["LM Studio\n:1234/v1"]
+    end
+
+    B --&gt;|HTTP/SSE| WebUI
+    WebUI --&gt;|RAGClient\nhttp://127.0.0.1:11455/rag| API
+    API --&gt; ENG
+    ENG --&gt; FAISS
+    ENG --&gt;|embed / llm| Backend
+    ENG --&gt; PARS
+    PARS --&gt;|"файлы из sync_folders"| DOCS["Корпус документов\n(напр. C:\Scripts\RAG systems\out)"]
+
+    ADM --&gt; DB_
+    CHAT --&gt; DB_</pre></details></div>
+<p><strong>Ключевое правило:</strong> Web UI <strong>не</strong> читает корпус <code>out/</code> напрямую и не держит кэши документов. Вся логика индексации, поиска и генерации живёт в ядре; Web UI лишь проксирует запросы через <code>RAGClient</code> (<code>api_client.py</code>) и стримит SSE в браузер.</p>
+<h2>1.2 Запуск и порядок</h2>
+<p>Сначала ядро, потом Web UI (порт 80 проксирует <code>/rag/*</code> на ядро):</p>
+<pre><code class="language-powershell">&amp; &quot;C:\Scripts\RAG systems\RAG System\.venv\Scripts\python.exe&quot; -X utf8 app.py
+&amp; &quot;C:\Scripts\RAG systems\RAG System Web UI\.venv\Scripts\python.exe&quot; -X utf8 app.py
+</code></pre>
+<ul>
+<li><code>-X utf8</code> обязателен у обоих приложений (иначе ломается кириллица в <code>.docx</code>).</li>
+<li>Адрес ядра Web UI берёт из <code>RAG_API_URL</code> (по умолчанию <code>http://127.0.0.1:11455/rag</code>).</li>
+<li>Порт Web UI — env <code>PORT</code> (по умолчанию 80, требует прав администратора).</li>
+<li>Web UI при первом запуске создаёт <code>data/app.db</code> (SQLite) и пользователя <code>admin</code> с паролем из <code>DEFAULT_ADMIN_PASSWORD</code> (по умолчанию <code>admin123</code>).</li>
+</ul>
+<h2>1.3 Поток запроса в чате (SSE)</h2>
+<div class="mmd"><div class="mermaid">sequenceDiagram
+    participant B as Браузер (chat.js)
+    participant W as Web UI (/api/chat/stream)
+    participant C as Ядро (/rag/agent/stream)
+    participant I as FAISS index
+    participant L as LLM (Ollama/LM Studio)
+
+    B-&gt;&gt;W: POST /api/chat/stream {prompt, system_prompt, temperature}
+    W-&gt;&gt;C: POST /rag/agent/stream (SSE)
+    C-&gt;&gt;C: проверки: is_syncing / is_initialized
+    C-&gt;&gt;I: retriever.retrieve(prompt) (top_k + exclude)
+    I--&gt;&gt;C: nodes (с score)
+    C--&gt;&gt;W: event: sources [{file_name, file_path, node_id, score}]
+    C-&gt;&gt;L: llm.stream_chat([промпт с контекстом])
+    loop токены
+        L--&gt;&gt;C: ChunkResponse (delta / thinking_delta)
+        C--&gt;&gt;W: event: token | reasoning
+    end
+    C--&gt;&gt;W: event: done {answer, reasoning, sources, tokens_in, tokens_out, elapsed}
+    W--&gt;&gt;B: SSE "data: {json}\n\n"
+    B-&gt;&gt;B: рендер markdown (marked + DOMPurify), метрики, источники</div><details class="mmdcode"><summary>Код диаграммы</summary><pre class="diagram">sequenceDiagram
+    participant B as Браузер (chat.js)
+    participant W as Web UI (/api/chat/stream)
+    participant C as Ядро (/rag/agent/stream)
+    participant I as FAISS index
+    participant L as LLM (Ollama/LM Studio)
+
+    B-&gt;&gt;W: POST /api/chat/stream {prompt, system_prompt, temperature}
+    W-&gt;&gt;C: POST /rag/agent/stream (SSE)
+    C-&gt;&gt;C: проверки: is_syncing / is_initialized
+    C-&gt;&gt;I: retriever.retrieve(prompt) (top_k + exclude)
+    I--&gt;&gt;C: nodes (с score)
+    C--&gt;&gt;W: event: sources [{file_name, file_path, node_id, score}]
+    C-&gt;&gt;L: llm.stream_chat([промпт с контекстом])
+    loop токены
+        L--&gt;&gt;C: ChunkResponse (delta / thinking_delta)
+        C--&gt;&gt;W: event: token | reasoning
+    end
+    C--&gt;&gt;W: event: done {answer, reasoning, sources, tokens_in, tokens_out, elapsed}
+    W--&gt;&gt;B: SSE "data: {json}\n\n"
+    B-&gt;&gt;B: рендер markdown (marked + DOMPurify), метрики, источники</pre></details></div>
+<p>События SSE: <code>sources</code>, <code>reasoning</code> (thinking), <code>token</code>, <code>done</code>, <code>error</code>.</p>
+<h2>1.4 Поток индексации (фоновый поток ядра)</h2>
+<div class="mmd"><div class="mermaid">flowchart TD
+    A["RAGEngine.initialize()"] --&gt; B["__init_backend(): сборка LlamaSettings.llm / embed_model"]
+    B --&gt; C["__check_backend(): list_models, capabilities"]
+    C --&gt; D["thread: sync_index()"]
+    D --&gt; E{"Загрузить существующий\nFAISS-кэш (.cache/faiss_index)?"}
+    E --&gt;|есть| F["load_index_from_storage"]
+    E --&gt;|нет| G["Новый FaissVectorStore + persist (create)"]
+    F --&gt; H["_scan_documents(): обход sync_folders"]
+    G --&gt; H
+    H --&gt; I{"Изменения файлов?\n(file_hashes.db, MD5)"}
+    I --&gt;|нет| J["status: Готово к работе"]
+    I --&gt;|да| K["для каждого файла:\n_load_document → парсер"]
+    K --&gt; L["page_count sanity (0 &lt; p ≤ page_limit) и size ≤ size_limit_mb"]
+    L --&gt; M["node_parser.get_nodes_from_documents → чанки"]
+    M --&gt; N["index.insert_nodes(nodes)"]
+    N --&gt; O["storage_context.persist(FAISS) + file_hash_db.save"]
+    O --&gt; J</div><details class="mmdcode"><summary>Код диаграммы</summary><pre class="diagram">flowchart TD
+    A["RAGEngine.initialize()"] --&gt; B["__init_backend(): сборка LlamaSettings.llm / embed_model"]
+    B --&gt; C["__check_backend(): list_models, capabilities"]
+    C --&gt; D["thread: sync_index()"]
+    D --&gt; E{"Загрузить существующий\nFAISS-кэш (.cache/faiss_index)?"}
+    E --&gt;|есть| F["load_index_from_storage"]
+    E --&gt;|нет| G["Новый FaissVectorStore + persist (create)"]
+    F --&gt; H["_scan_documents(): обход sync_folders"]
+    G --&gt; H
+    H --&gt; I{"Изменения файлов?\n(file_hashes.db, MD5)"}
+    I --&gt;|нет| J["status: Готово к работе"]
+    I --&gt;|да| K["для каждого файла:\n_load_document → парсер"]
+    K --&gt; L["page_count sanity (0 &lt; p ≤ page_limit) и size ≤ size_limit_mb"]
+    L --&gt; M["node_parser.get_nodes_from_documents → чанки"]
+    M --&gt; N["index.insert_nodes(nodes)"]
+    N --&gt; O["storage_context.persist(FAISS) + file_hash_db.save"]
+    O --&gt; J</pre></details></div>
+<p>Особенности:</p>
+<ul>
+<li>Обработка файлов <strong>строго последовательная</strong> (<code>for rel_path in new_or_modified</code>) — параллельные <code>insert_nodes</code> + <code>persist</code> в один FAISS-файл зависают/портят индекс.</li>
+<li>Инкрементальность по MD5-хэшу (таблица <code>file_hashes</code> в SQLite <code>.cache/file_hashes.db</code>).</li>
+<li><code>reset=true</code> (<code>POST /rag/index?reset=true</code>) — очистка кэша и полная пересинхронизация.</li>
+<li>В frozen-режиме <code>.cache</code> создаётся рядом с exe (<code>Path(sys.executable).parent/.cache</code>).</li>
+</ul>
+<h2>1.5 Поток поиска записок (<code>/memos</code>)</h2>
+<p>Поиск <strong>всех</strong> служебных записок по теме с полным текстом. Использует постраничный обход индекса без повторов:</p>
+<div class="mmd"><div class="mermaid">flowchart LR
+    A["prompt по теме"] --&gt; B["Извлечь корни слов темы\n(_memo_topic_words)"]
+    B --&gt; C["Гибридный отбор кандидатов"]
+    C --&gt; D1["Имя-фильтр: файлы, в названии которых есть корни\n(идут первыми, полными чанками)"]
+    C --&gt; D2["Семантический ретрив: retriever.retrieve(prompt)\n(доки по смыслу, не отражённые в имени)"]
+    D1 --&gt; E["candidate_pairs: [(file_path, node)]"]
+    D2 --&gt; E
+    E --&gt; F{"for page in 1..max_pages"}
+    F --&gt;|батч page_size чанков| G["Батч-LLM (stream_chat)\nс системным промптом _MEMO_BATCH_SYSTEM_PROMPT"]
+    G --&gt; H["reasoning стримится пользователю"]
+    G --&gt; I["Парсинг ответа: строки 'ПУТЬ: &lt;путь&gt;'"]
+    I --&gt; J{"В батче есть новые пути?"}
+    J --&gt;|да| K["добавить в found_paths, перейти к след. батчу"]
+    J --&gt;|"нет / 'НОВЫХ ЗАПИСОК НЕТ'"| L["Завершить"]
+    L --&gt; M["Сборка полного текста из docstore\n(_assemble_document_text по start_char_idx)"]
+    M --&gt; N["done: {documents, pages, tokens_in/out, elapsed}"]</div><details class="mmdcode"><summary>Код диаграммы</summary><pre class="diagram">flowchart LR
+    A["prompt по теме"] --&gt; B["Извлечь корни слов темы\n(_memo_topic_words)"]
+    B --&gt; C["Гибридный отбор кандидатов"]
+    C --&gt; D1["Имя-фильтр: файлы, в названии которых есть корни\n(идут первыми, полными чанками)"]
+    C --&gt; D2["Семантический ретрив: retriever.retrieve(prompt)\n(доки по смыслу, не отражённые в имени)"]
+    D1 --&gt; E["candidate_pairs: [(file_path, node)]"]
+    D2 --&gt; E
+    E --&gt; F{"for page in 1..max_pages"}
+    F --&gt;|батч page_size чанков| G["Батч-LLM (stream_chat)\nс системным промптом _MEMO_BATCH_SYSTEM_PROMPT"]
+    G --&gt; H["reasoning стримится пользователю"]
+    G --&gt; I["Парсинг ответа: строки 'ПУТЬ: &lt;путь&gt;'"]
+    I --&gt; J{"В батче есть новые пути?"}
+    J --&gt;|да| K["добавить в found_paths, перейти к след. батчу"]
+    J --&gt;|"нет / 'НОВЫХ ЗАПИСОК НЕТ'"| L["Завершить"]
+    L --&gt; M["Сборка полного текста из docstore\n(_assemble_document_text по start_char_idx)"]
+    M --&gt; N["done: {documents, pages, tokens_in/out, elapsed}"]</pre></details></div>
+<p>Ключевые параметры: <code>page_size=50</code>, <code>max_pages=15</code>. Повторы исключаются через <code>node_ids</code> (множество <code>seen_ids</code>), а для постраничности используется подход с <code>exclude_node_ids</code> (см. <code>_ExcludeNodeIdsPostprocessor</code>).</p>
+<h2>1.6 Схема БД Web UI</h2>
+<div class="mmd"><div class="mermaid">erDiagram
+    users ||--o{ conversations : "has"
+    users ||--o{ favorites : "has"
+    users ||--o{ memo_states : "has"
+    conversations ||--o{ messages : "has"
+
+    users {
+        int id PK
+        string username "unique, 3-32"
+        string password_hash
+        string role "admin | user"
+        datetime created_at
+        bool is_active
+    }
+    conversations {
+        int id PK
+        int user_id FK
+        string title
+        datetime created_at
+        datetime updated_at
+    }
+    messages {
+        int id PK
+        int conversation_id FK
+        string role "user | bot"
+        text content
+        text sources_json
+        text memo_data_json
+        datetime created_at
+    }
+    favorites {
+        int id PK
+        int user_id FK
+        string title
+        text content
+        text sources_json
+        text memo_data_json
+        datetime created_at
+    }
+    memo_states {
+        int id PK
+        int user_id FK
+        text state_json
+        datetime updated_at
+    }</div><details class="mmdcode"><summary>Код диаграммы</summary><pre class="diagram">erDiagram
+    users ||--o{ conversations : "has"
+    users ||--o{ favorites : "has"
+    users ||--o{ memo_states : "has"
+    conversations ||--o{ messages : "has"
+
+    users {
+        int id PK
+        string username "unique, 3-32"
+        string password_hash
+        string role "admin | user"
+        datetime created_at
+        bool is_active
+    }
+    conversations {
+        int id PK
+        int user_id FK
+        string title
+        datetime created_at
+        datetime updated_at
+    }
+    messages {
+        int id PK
+        int conversation_id FK
+        string role "user | bot"
+        text content
+        text sources_json
+        text memo_data_json
+        datetime created_at
+    }
+    favorites {
+        int id PK
+        int user_id FK
+        string title
+        text content
+        text sources_json
+        text memo_data_json
+        datetime created_at
+    }
+    memo_states {
+        int id PK
+        int user_id FK
+        text state_json
+        datetime updated_at
+    }</pre></details></div>
+<h2>1.7 Развёртывание</h2>
+<div class="mmd"><div class="mermaid">flowchart LR
+    subgraph Dev["Разработка (.py)"]
+        PY1["python -X utf8 app.py\n(ядро :11455)"] --&gt; PY2["python -X utf8 app.py\n(Web UI :80 или :PORT)"]
+    end
+
+    subgraph Prod["Frozen (PyInstaller onedir)"]
+        E1["dist/RAG System/RAG System.exe"] --&gt; E2["dist/RAG System Web UI/RAG System Web UI.exe"]
+    end
+
+    subgraph Data["Данные"]
+        S1["rag_engine/settings.json\nрядом с exe или модулем"]
+        S2["data/app.db + data/secret_key\nрядом с exe (не в _internal)"]
+        S3["_internal/docx_templates/mmo.dotx\n(зашит в сборку Web UI)"]
+        S4[".cache/ (FAISS + file_hashes.db)\nрядом с exe ядра"]
+    end</div><details class="mmdcode"><summary>Код диаграммы</summary><pre class="diagram">flowchart LR
+    subgraph Dev["Разработка (.py)"]
+        PY1["python -X utf8 app.py\n(ядро :11455)"] --&gt; PY2["python -X utf8 app.py\n(Web UI :80 или :PORT)"]
+    end
+
+    subgraph Prod["Frozen (PyInstaller onedir)"]
+        E1["dist/RAG System/RAG System.exe"] --&gt; E2["dist/RAG System Web UI/RAG System Web UI.exe"]
+    end
+
+    subgraph Data["Данные"]
+        S1["rag_engine/settings.json\nрядом с exe или модулем"]
+        S2["data/app.db + data/secret_key\nрядом с exe (не в _internal)"]
+        S3["_internal/docx_templates/mmo.dotx\n(зашит в сборку Web UI)"]
+        S4[".cache/ (FAISS + file_hashes.db)\nрядом с exe ядра"]
+    end</pre></details></div>
+<p>Особенности frozen-режима:</p>
+<ul>
+<li>Ядро: <code>config_dir()</code> → рядом с exe (settings.json), <code>.cache</code> → рядом с exe.</li>
+<li>Web UI: <code>hook_runtime.py</code> выставляет <code>MEMO_TEMPLATE_DIR=&lt;exe_dir&gt;/_internal/docx_templates</code>, <code>DATABASE_URL=sqlite:///&lt;exe_dir&gt;/data/app.db</code>, <code>SECRET_KEY_FILE=&lt;exe_dir&gt;/data/secret_key</code>.</li>
+<li>Не бандлится <code>out/</code> (корпус), <code>data/</code>, настройки — всё создаётся при первом запуске.</li>
+</ul>
+<h2>1.8 Ограничение: Word COM</h2>
+<p>Все обращения к Word COM (конвертация <code>.doc</code>, подсчёт страниц <code>.docx</code>, генерация корпуса) <strong>сериализованы</strong> общим локом <code>_WORD_LOCK</code> в <code>docx_parser.py</code>. Параллельные <code>Dispatch("Word.Application")</code> из нескольких потоков заставляют Word зависать, поэтому нельзя добавлять параллельный Word-код. Тестируется только на Windows с установленным Word (CI без Word невозможен).</p>
+</main>
+<footer>Сгенерировано из <code>doc/*.md</code> — при правках редактируйте markdown, затем перегенерируйте doc_html.</footer>
+</body>
+</html>

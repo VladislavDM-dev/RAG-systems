@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>06. Схема БД · RAG System Docs</title>
+<link rel="stylesheet" href="style.css">
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+<script>
+  window.addEventListener('DOMContentLoaded', function () {
+    if (window.mermaid) {
+      mermaid.initialize({ startOnLoad: true, theme: 'base',
+        themeVariables: { 'fontSize': '14px', 'primaryColor': '#eef4ff',
+          'primaryBorderColor': '#9cb4e8', 'lineColor': '#5b6b8c' } });
+    }
+  });
+</script>
+</head>
+<body>
+<nav class="topnav">
+  <a class="navtitle" href="index.html">RAG System Docs</a>
+  <a href="00-README.html">00.</a> <a href="01-architecture.html">01.</a> <a href="02-core-rag-system.html">02.</a> <a href="03-web-ui.html">03.</a> <a href="04-api-core.html">04.</a> <a href="05-api-webui.html">05.</a> <span class="cur">06.</span> <a href="07-memo-wizard.html">07.</a> <a href="08-installation.html">08.</a> <a href="09-testing.html">09.</a> <a href="10-build.html">10.</a> <a href="11-troubleshooting.html">11.</a> <a href="12-git-and-conventions.html">12.</a>
+</nav>
+<header class="pagetitle">
+  <h1>06. Схема БД</h1>
+  <p class="srcnote">Исходник: <code>doc/06-database.md</code> · Mermaid-диаграммы рендерятся браузером (CDN); при отключённом JS показан код диаграммы.</p>
+</header>
+<main>
+<h1>06. Схема БД Web UI (SQLite)</h1>
+<p>База: <code>data/app.db</code> (путь от <code>DATABASE_URL</code>, по умолчанию <code>sqlite:///data/app.db</code>). Создаётся автоматически при старте (<code>db.create_all()</code>). В frozen-режиме лежит рядом с exe (<code>data/app.db</code>).</p>
+<h2>6.1 Таблицы</h2>
+<div class="mmd"><div class="mermaid">erDiagram
+    users ||--o{ conversations : &quot;owned&quot;
+    users ||--o{ favorites : &quot;owned&quot;
+    users ||--o{ memo_states : &quot;owned&quot;
+    users ||--o{ notification_dismissed : &quot;closed&quot;
+    users ||--o{ admin_messages : &quot;sent&quot;
+    notifications ||--o{ notification_dismissed : &quot;closed&quot;
+    conversations ||--o{ messages : &quot;in&quot;
+
+    users {
+        integer id PK
+        varchar(32) username &quot;unique, index&quot;
+        varchar(256) password_hash &quot;werkzeug generate_password_hash&quot;
+        varchar(16) role &quot;admin | user&quot;
+        datetime created_at
+        boolean is_active
+    }
+    conversations {
+        integer id PK
+        integer user_id FK &quot;not null, index&quot;
+        varchar(256) title
+        datetime created_at
+        datetime updated_at &quot;onupdate&quot;
+    }
+    messages {
+        integer id PK
+        integer conversation_id FK &quot;not null, index&quot;
+        varchar(8) role &quot;user | bot&quot;
+        text content
+        text sources_json
+        text memo_data_json
+        datetime created_at
+    }
+    favorites {
+        integer id PK
+        integer user_id FK &quot;not null, index&quot;
+        varchar(256) title
+        text content
+        text sources_json
+        text memo_data_json
+        datetime created_at
+    }
+    memo_states {
+        integer id PK
+        integer user_id FK &quot;not null, index&quot;
+        text state_json &quot;JSON сессии мастера&quot;
+        datetime updated_at &quot;onupdate&quot;
+    }
+    notifications {
+        integer id PK
+        text text
+        datetime created_at
+    }
+    notification_dismissed {
+        integer id PK
+        integer user_id FK &quot;not null, index&quot;
+        integer notification_id FK &quot;not null, index&quot;
+        datetime created_at
+    }
+    admin_messages {
+        integer id PK
+        integer user_id FK &quot;not null, index&quot;
+        text text
+        boolean is_read
+        datetime created_at
+    }</div><details class="mmdcode"><summary>Код диаграммы</summary><pre class="diagram">erDiagram
+    users ||--o{ conversations : &quot;owned&quot;
+    users ||--o{ favorites : &quot;owned&quot;
+    users ||--o{ memo_states : &quot;owned&quot;
+    users ||--o{ notification_dismissed : &quot;closed&quot;
+    users ||--o{ admin_messages : &quot;sent&quot;
+    notifications ||--o{ notification_dismissed : &quot;closed&quot;
+    conversations ||--o{ messages : &quot;in&quot;
+
+    users {
+        integer id PK
+        varchar(32) username &quot;unique, index&quot;
+        varchar(256) password_hash &quot;werkzeug generate_password_hash&quot;
+        varchar(16) role &quot;admin | user&quot;
+        datetime created_at
+        boolean is_active
+    }
+    conversations {
+        integer id PK
+        integer user_id FK &quot;not null, index&quot;
+        varchar(256) title
+        datetime created_at
+        datetime updated_at &quot;onupdate&quot;
+    }
+    messages {
+        integer id PK
+        integer conversation_id FK &quot;not null, index&quot;
+        varchar(8) role &quot;user | bot&quot;
+        text content
+        text sources_json
+        text memo_data_json
+        datetime created_at
+    }
+    favorites {
+        integer id PK
+        integer user_id FK &quot;not null, index&quot;
+        varchar(256) title
+        text content
+        text sources_json
+        text memo_data_json
+        datetime created_at
+    }
+    memo_states {
+        integer id PK
+        integer user_id FK &quot;not null, index&quot;
+        text state_json &quot;JSON сессии мастера&quot;
+        datetime updated_at &quot;onupdate&quot;
+    }
+    notifications {
+        integer id PK
+        text text
+        datetime created_at
+    }
+    notification_dismissed {
+        integer id PK
+        integer user_id FK &quot;not null, index&quot;
+        integer notification_id FK &quot;not null, index&quot;
+        datetime created_at
+    }
+    admin_messages {
+        integer id PK
+        integer user_id FK &quot;not null, index&quot;
+        text text
+        boolean is_read
+        datetime created_at
+    }</pre></details></div>
+<h2>6.2 Сущности (<code>models.py</code>)</h2>
+<h3><code>User(UserMixin, db.Model)</code> — таблица <code>users</code></h3>
+<ul>
+<li><code>username</code> — уникальный, 3–32 символа, только <code>[A-Za-z0-9_.-]</code>.</li>
+<li>Пароль хэшируется <code>werkzeug.security.generate_password_hash</code>, проверка <code>check_password</code>.</li>
+<li><code>role</code>: <code>admin</code>/<code>user</code>; свойство <code>is_admin</code> = <code>role == "admin"</code>.</li>
+<li>Связи: <code>conversations</code>, <code>favorites</code> (lazy=dynamic, cascade delete-orphan).</li>
+<li><code>to_dict()</code>: id, username, role, created_at (без пароля).</li>
+</ul>
+<h3><code>Conversation</code> — таблица <code>conversations</code></h3>
+<ul>
+<li>Диалог одного пользователя; <code>title</code> (используется как первый вопрос).</li>
+<li><code>updated_at</code> обновляется автоматически (onupdate); сообщения каскадно удаляются.</li>
+</ul>
+<h3><code>Message</code> — таблица <code>messages</code></h3>
+<ul>
+<li><code>role</code>: <code>user</code>/<code>bot</code>.</li>
+<li><code>sources_json</code> — сериализованный список источников (<code>[ {file_name, file_path, score} ]</code>).</li>
+<li><code>memo_data_json</code> — список документов записок (<code>[ {file_name, file_path, text} ]</code>), чтобы восстановить свёрнутый список <code>/memos</code>.</li>
+<li><code>to_dict()</code> десериализует JSON.</li>
+</ul>
+<h3><code>Favorite</code> — таблица <code>favorites</code></h3>
+<ul>
+<li>Модель верхнего уровня (не зависит от диалогов).</li>
+<li>Как Message, но с собственным <code>title</code> (например «Служебная записка: Тема»).</li>
+</ul>
+<h3><code>MemoState</code> — таблица <code>memo_states</code></h3>
+<ul>
+<li>Состояние мастера служебной записки <b>на сервере</b> (в отличие от старого localStorage-подхода). Пока мастер активен, шаги и поля сохраняются сюда, чтобы перезагрузка страницы не теряла сессию.</li>
+<li>Поля состояния: <code>ts, step, topic, variants, chosen, fieldOptions, fields, fieldDefsNoBody, keys</code>.</li>
+</ul>
+<blockquote><b>Расписание запрета (usage_restrictions)</b> в SQLite Web UI больше не хранится: единый источник — ядро RAG, <code>Settings.usage_restrictions</code> в <code>rag_engine/settings.json</code> (см. doc/04, раздел «Расписание ограничений»). Web UI только проксирует <code>/rag/schedule</code>.</blockquote>
+<h3><code>Notification</code> — таблица <code>notifications</code></h3>
+<ul>
+<li>Уведомление администратора; показывается пользователям сверху и скрывается по клику/крестику (запись в <code>notification_dismissed</code>).</li>
+</ul>
+<h3><code>NotificationDismissed</code> — таблица <code>notification_dismissed</code></h3>
+<ul>
+<li>Отметка, что пользователь закрыл уведомление (<code>UniqueConstraint(user_id, notification_id)</code>).</li>
+</ul>
+<h3><code>AdminMessage</code> — таблица <code>admin_messages</code></h3>
+<ul>
+<li>Сообщение пользователя администратору (об ошибке / обратная связь): <code>text</code>, <code>is_read</code>, <code>created_at</code>; автор — <code>user_id</code> (каскадно удаляется вместе с пользователем).</li>
+</ul>
+<h2>6.3 Отношения (правила)</h2>
+<ul>
+<li>владелец данных — <code>user_id</code>;</li>
+<li>все CRUD-эндпоинты фильтруют по <code>current_user.id</code> (чужой доступ → 404);</li>
+<li>удаление <code>conversation</code> каскадно удаляет <code>messages</code>;</li>
+<li>нельзя удалить аккаунт <code>admin</code> через API (403/400);</li>
+<li>пароль не попадает в API-ответы (<code>to_dict</code> без <code>password_hash</code>).</li>
+</ul>
+<h2>6.4 Примечания по проектированию</h2>
+<ul>
+<li>Данные Web UI (SQLite) и файлы ядра (<code>.cache/*</code>) независимы: история чата не восстанавливается из индекса — только из БД.</li>
+<li>При перезапуске Web UI <code>data/app.db</code> сохраняется (кроме fresh/deploy, если папки данных нет в сборке).</li>
+</ul>
+</main>
+<footer>Сгенерировано из <code>doc/*.md</code> — при правках редактируйте markdown, затем перегенерируйте doc_html.</footer>
+</body>
+</html>

@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>00. Обзор · RAG System Docs</title>
+<link rel="stylesheet" href="style.css">
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+<script>
+  window.addEventListener('DOMContentLoaded', function () {
+    if (window.mermaid) {
+      mermaid.initialize({ startOnLoad: true, theme: 'base',
+        themeVariables: { 'fontSize': '14px', 'primaryColor': '#eef4ff',
+          'primaryBorderColor': '#9cb4e8', 'lineColor': '#5b6b8c' } });
+    }
+  });
+</script>
+</head>
+<body>
+<nav class="topnav">
+  <a class="navtitle" href="index.html">RAG System Docs</a>
+  <span class="cur">00.</span> <a href="01-architecture.html">01.</a> <a href="02-core-rag-system.html">02.</a> <a href="03-web-ui.html">03.</a> <a href="04-api-core.html">04.</a> <a href="05-api-webui.html">05.</a> <a href="06-database.html">06.</a> <a href="07-memo-wizard.html">07.</a> <a href="08-installation.html">08.</a> <a href="09-testing.html">09.</a> <a href="10-build.html">10.</a> <a href="11-troubleshooting.html">11.</a> <a href="12-git-and-conventions.html">12.</a>
+</nav>
+<header class="pagetitle">
+  <h1>00. Обзор</h1>
+  <p class="srcnote">Исходник: <code>doc/00-README.md</code> · Mermaid-диаграммы рендерятся браузером (CDN); при отключённом JS показан код диаграммы.</p>
+</header>
+<main>
+<h1>RAG System — документация проекта</h1>
+<p>Репозиторий состоит из <b>двух независимых Python-проектов</b> (у каждого свой <code>.venv</code>):</p>
+<table><tr><th>Проект</th><th>Назначение</th><th>Порт по умолчанию</th><th>Папка</th></tr><tr><td><b>RAG System</b></td><td>Ядро RAG: индексация документов, векторный поиск, RAG-ответы, Streaming API</td><td><code>11455</code> (префикс <code>/rag</code>)</td><td><code>RAG System/</code></td></tr><tr><td><b>RAG System Web UI</b></td><td>Веб-интерфейс: чат, история, мастер служебной записки, админка</td><td><code>80</code> (env <code>PORT</code>)</td><td><code>RAG System Web UI/</code></td></tr></table>
+<p>Web UI работает <b>только через RAG API</b> ядра: корпус <code>out/</code> читает только ядро и его тесты.</p>
+<hr>
+<h2>Оглавление</h2>
+<table><tr><th>#</th><th>Файл</th><th>Содержание</th></tr><tr><td>01</td><td><a href="01-architecture.md"><code>01-architecture.md</code></a></td><td>Общая архитектура, схемы, потоки данных, развёртывание</td></tr><tr><td>02</td><td><a href="02-core-rag-system.md"><code>02-core-rag-system.md</code></a></td><td>Ядро RAG System: модули, парсеры, провайдеры, конфиг, движок</td></tr><tr><td>03</td><td><a href="03-web-ui.md"><code>03-web-ui.md</code></a></td><td>Web UI: модули, сингл-страница, команды чата, админка</td></tr><tr><td>04</td><td><a href="04-api-core.md"><code>04-api-core.md</code></a></td><td>REST / SSE API ядра (префикс <code>/rag</code>)</td></tr><tr><td>05</td><td><a href="05-api-webui.md"><code>05-api-webui.md</code></a></td><td>API Web UI (префикс <code>/api</code>)</td></tr><tr><td>06</td><td><a href="06-database.md"><code>06-database.md</code></a></td><td>Схема SQLite-базы Web UI, сущности, мастера</td></tr><tr><td>07</td><td><a href="07-memo-wizard.md"><code>07-memo-wizard.md</code></a></td><td>Мастер служебной записки <code>/create</code> и шаблон <code>mmo.dotx</code></td></tr><tr><td>08</td><td><a href="08-installation.md"><code>08-installation.md</code></a></td><td>Установка, запуск, переменные окружения</td></tr><tr><td>09</td><td><a href="09-testing.md"><code>09-testing.md</code></a></td><td>Тестирование (pytest, JS, headless)</td></tr><tr><td>10</td><td><a href="10-build.md"><code>10-build.md</code></a></td><td>Сборка onedir-EXE через PyInstaller</td></tr><tr><td>11</td><td><a href="11-troubleshooting.md"><code>11-troubleshooting.md</code></a></td><td>Частые проблемы и решения</td></tr><tr><td>12</td><td><a href="12-git-and-conventions.md"><code>12-git-and-conventions.md</code></a></td><td>Git-правила, соглашения, чек-листы</td></tr></table>
+<p>HTML-версия документации лежит в папке <a href="../doc_html/00-README.html"><code>../doc_html/</code></a>.</p>
+<hr>
+<h2>Краткая сводка</h2>
+<ul>
+<li><b>Ядро</b> — Flask-приложение, стартует с <code>RAGEngine.initialize()</code>, синхронизация индекса идёт в фоновом потоке. Читает <code>rag_engine/settings.json</code>.</li>
+<li><b>Провайдеры инференса</b>: Ollama (нативный API) и LM Studio (OpenAI-совместимый). Переключение по <code>provider</code>.</li>
+<li><b>Форматы документов</b>: <code>.docx</code> (python-docx), <code>.doc</code> (Word COM), <code>.pdf</code> (ABBYY FineReader 15 + OCR). Для <code>.doc</code>/подсчёта страниц <code>.docx</code> и <code>.pdf</code> нужен Windows + установленный Word/FineReader.</li>
+<li><b>Векторный поиск</b>: LlamaIndex + FAISS (<code>faiss-cpu</code>), чанки <code>SentenceSplitter</code>.</li>
+<li><b>Web UI</b> — Flask + SQLAlchemy (SQLite) + Flask-Login + CSRF. Чат со SSE-стримингом, история диалогов и избранное, мастер <code>/create</code>, <code>/memos</code>, уведомления, обратная связь, смена пароля, ограничение доступа по расписанию (источник — ядро), админ-панель <code>/admin</code>.</li>
+<li><b>Мастер записки</b> генерирует варианты тела через RAG и собирает <code>.docx</code> по шаблону <code>docx_templates/mmo.dotx</code> (поля из самого шаблона, пласхолдеры <code>{{ key }}</code>).</li>
+<li><b>Сборка</b>: PyInstaller onedir-EXE для обоих проектов (<code>build.spec</code> + <code>build_all.ps1</code>), результат в <code>dist/</code>.</li>
+</ul>
+<blockquote>Версии на момент написания документации: ядро <code>RAGEngine.VERSION = "26.10.13"</code>, Web UI <code>MEMO_JS_VERSION = "20261013-02"</code>.</blockquote>
+</main>
+<footer>Сгенерировано из <code>doc/*.md</code> — при правках редактируйте markdown, затем перегенерируйте doc_html.</footer>
+</body>
+</html>

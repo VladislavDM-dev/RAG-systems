@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>04. API ядра · RAG System Docs</title>
+<link rel="stylesheet" href="style.css">
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+<script>
+  window.addEventListener('DOMContentLoaded', function () {
+    if (window.mermaid) {
+      mermaid.initialize({ startOnLoad: true, theme: 'base',
+        themeVariables: { 'fontSize': '14px', 'primaryColor': '#eef4ff',
+          'primaryBorderColor': '#9cb4e8', 'lineColor': '#5b6b8c' } });
+    }
+  });
+</script>
+</head>
+<body>
+<nav class="topnav">
+  <a class="navtitle" href="index.html">RAG System Docs</a>
+  <a href="00-README.html">00.</a> <a href="01-architecture.html">01.</a> <a href="02-core-rag-system.html">02.</a> <a href="03-web-ui.html">03.</a> <span class="cur">04.</span> <a href="05-api-webui.html">05.</a> <a href="06-database.html">06.</a> <a href="07-memo-wizard.html">07.</a> <a href="08-installation.html">08.</a> <a href="09-testing.html">09.</a> <a href="10-build.html">10.</a> <a href="11-troubleshooting.html">11.</a> <a href="12-git-and-conventions.html">12.</a>
+</nav>
+<header class="pagetitle">
+  <h1>04. API ядра</h1>
+  <p class="srcnote">Исходник: <code>doc/04-api-core.md</code> · Mermaid-диаграммы рендерятся браузером (CDN); при отключённом JS показан код диаграммы.</p>
+</header>
+<main>
+<h1>04. API ядра RAG System (<code>/rag/*</code>)</h1>
+<p>Сервер: Flask на порту <b>11455</b>, все endpoints под префиксом <b><code>/rag</code></b>.</p>
+<p>Формат ответов — JSON (<code>ensure_ascii=False</code> там, где используется <code>json.dumps</code>), стриминг — SSE (<code>text/event-stream</code>).</p>
+<h2>4.1 Health / metadata</h2>
+<h3><code>GET /rag/health</code></h3>
+<pre><code class="language-json">{ &quot;status&quot;: &quot;ok&quot; }</code></pre>
+<h3><code>GET /rag/info</code></h3>
+<pre><code class="language-json">{
+  &quot;service&quot;: &quot;RAG System&quot;,
+  &quot;engine&quot;: &quot;IndexDocuments RAGEngine&quot;,
+  &quot;version&quot;: &quot;26.10.13&quot;,
+  &quot;provider&quot;: &quot;lmstudio&quot;,
+  &quot;initialized&quot;: true,
+  &quot;syncing&quot;: false,
+  &quot;document_count&quot;: 53,
+  &quot;status_backend&quot;: true
+}</code></pre>
+<h3><code>GET /rag/engine/status</code></h3>
+<p>Полный статус движка:</p>
+<pre><code class="language-json">{
+  &quot;is_initialized&quot;: true,
+  &quot;is_syncing&quot;: false,
+  &quot;status&quot;: &quot;Готово к работе&quot;,
+  &quot;progress&quot;: 100,
+  &quot;status_backend&quot;: true,
+  &quot;document_count&quot;: 53,
+  &quot;sync_files&quot;: [],
+  &quot;index_updated&quot;: &quot;2026-09-22T10:15:00&quot;,
+  &quot;version&quot;: &quot;26.09.22&quot;
+}</code></pre>
+<h2>4.2 Чат / агентный стриминг</h2>
+<h3><code>POST /rag/agent/stream</code> (SSE)</h3>
+<p>Тело (JSON):</p>
+<table><tr><th>Поле</th><th>Тип</th><th>Обязательно</th><th>Примечание</th></tr><tr><td><code>prompt</code></td><td>str</td><td>да</td><td>Вопрос/промпт агента (либо <code>question</code>)</td></tr><tr><td><code>system_prompt</code></td><td>str</td><td>нет</td><td>системная инструкция (по умолчанию <code>DEFAULT_AGENT_SYSTEM_PROMPT</code>)</td></tr><tr><td><code>top_k</code></td><td>int</td><td>нет</td><td>фрагментов для ретрива (по умолчанию <code>similarity_top_k</code>)</td></tr><tr><td><code>temperature</code></td><td>float</td><td>нет</td><td>по умолчанию 0.98</td></tr><tr><td><code>exclude_node_ids</code></td><td>list[str]</td><td>нет</td><td>node_id уже отданных фрагментов (постраничный обход)</td></tr></table>
+<p>Ошибки до стрима: <code>400</code> (пустой prompt), <code>503</code> (индекс не готов — «Дождитесь завершения синхронизации»).</p>
+<p>События SSE (<code>data: {json}\n\n</code>):</p>
+<table><tr><th>type</th><th>Поля</th><th>Когда</th></tr><tr><td><code>sources</code></td><td><code>data</code>: <code>[{file_name, file_path, node_id, score}]</code></td><td>сразу после ретрива, до токенов</td></tr><tr><td><code>reasoning</code></td><td><code>data</code> (delta)</td><td>«размышления» модели (thinking), порциями</td></tr><tr><td><code>token</code></td><td><code>data</code> (delta)</td><td>текст ответа, порциями</td></tr><tr><td><code>done</code></td><td><code>answer, reasoning, sources, prompt, tokens_in, tokens_out, elapsed</code></td><td>финал</td></tr><tr><td><code>error</code></td><td><code>data</code></td><td>ошибка генерации/LLM</td></tr></table>
+<p>Пример <code>done</code>:</p>
+<pre><code class="language-json">{
+  &quot;type&quot;: &quot;done&quot;,
+  &quot;answer&quot;: &quot;В ответе из документов …&quot;,
+  &quot;reasoning&quot;: &quot;Мысли модели…&quot;,
+  &quot;sources&quot;: [{&quot;file_name&quot;: &quot;#297-….docx&quot;, &quot;file_path&quot;: &quot;C:\\…\\#297….docx&quot;, &quot;node_id&quot;: &quot;…&quot;, &quot;score&quot;: 0.42}],
+  &quot;prompt&quot;: &quot;…&quot;,
+  &quot;tokens_in&quot;: 1234,
+  &quot;tokens_out&quot;: 87,
+  &quot;elapsed&quot;: 3.15
+}</code></pre>
+<h2>4.3 Поиск служебных записок</h2>
+<h3><code>POST /rag/memos</code></h3>
+<p>Поиск <b>всех</b> записок по теме, в ответе — полный текст документов (собирается из docstore индекса, файлы повторно не парсятся).</p>
+<p>Тело: <code>prompt</code> (обязательно), опц. <code>temperature</code> (по умолч. 0.0), <code>page_size</code> (50), <code>max_pages</code> (15).</p>
+<p>Ответ <code>200</code>:</p>
+<pre><code class="language-json">{
+  &quot;ok&quot;: true,
+  &quot;total&quot;: 3,
+  &quot;pages&quot;: 1,
+  &quot;documents&quot;: [
+    { &quot;file_name&quot;: &quot;#297-….docx&quot;, &quot;file_path&quot;: &quot;C:\\…\\#297….docx&quot;, &quot;text&quot;: &quot;полный текст…&quot; }
+  ]
+}</code></pre>
+<p>Ошибки: <code>400</code> (нет prompt), <code>503</code> (идет синхронизация / индекс не готов), <code>500</code> (прочее).</p>
+<h3><code>POST /rag/memos/stream</code> (SSE)</h3>
+<p>То же, но постранично стримится <code>reasoning</code> батч-LLM:</p>
+<ul>
+<li><code>reasoning</code> — размышления батча;</li>
+<li><code>done</code>: <code>{documents, pages, prompt, tokens_in, tokens_out, elapsed}</code>;</li>
+<li><code>error</code>.</li>
+</ul>
+<h2>4.4 Индексация</h2>
+<h3><code>POST /rag/index</code></h3>
+<p>Запуск синхронизации (фоновый поток). <code>?reset=true</code> — полный сброс кэша + пересинхронизация.</p>
+<ul>
+<li><code>202</code>: <code>{status: "started", reset: false, message: "Синхронизация запущена"}</code></li>
+<li><code>200</code>: <code>{status: "already_syncing", ...}</code> — если уже идёт.</li>
+</ul>
+<h3><code>GET /rag/index/status</code></h3>
+<pre><code class="language-json">{
+  &quot;is_syncing&quot;: true,
+  &quot;status&quot;: &quot;Обработано 12/50 файлов.&quot;,
+  &quot;progress&quot;: 29,
+  &quot;sync_files&quot;: [{&quot;file&quot;: &quot;…&quot;, &quot;operation&quot;: &quot;…&quot;}],
+  &quot;initialized&quot;: false,
+  &quot;document_count&quot;: 12,
+  &quot;index_updated&quot;: &quot;—&quot;
+}</code></pre>
+<h3><code>GET /rag/index/stats</code></h3>
+<pre><code class="language-json">{ &quot;document_count&quot;: 53, &quot;index_updated&quot;: &quot;2026-09-22T…&quot;, &quot;status&quot;: &quot;Готово к работе&quot; }</code></pre>
+<h2>4.5 Папки синхронизации</h2>
+<h3><code>GET /rag/folders</code></h3>
+<pre><code class="language-json">{ &quot;folders&quot;: [&quot;C:\\Scripts\\RAG systems\\out&quot;] }</code></pre>
+<h3><code>POST /rag/folders</code></h3>
+<p><code>{ "folders": ["C:\\Docs"] }</code> → <code>{ "ok": true, "folders": [...] }</code>. <code>400</code> если не список.</p>
+<h2>4.6 Конфигурация</h2>
+<h3><code>GET /rag/config</code></h3>
+<p>Полный <code>Settings.to_dict()</code>: provider, context_window, chunk_size, chunk_overlap, similarity_top_k, page_limit, size_limit_mb, embedding_dim, llm, llm_embed, llm_keywords, url, api_key, sync_folders.</p>
+<h3><code>PATCH /rag/config</code></h3>
+<p>Частичное обновление. Допустимые ключи: <code>provider, api_key, context_window, chunk_size, chunk_overlap, similarity_top_k, page_limit, size_limit_mb, embedding_dim, llm, llm_embed, llm_keywords, url</code>.</p>
+<ul>
+<li><code>provider</code> допускает только <code>ollama | lmstudio</code> (иначе 400).</li>
+<li>Ответ: <code>{"ok": true, "changed": ["llm"], "config": {...}}</code>.</li>
+<li>Побочные эффекты: смена эмбеддинг-параметров → пересоздание индекса (<code>start_sync(is_remove=True)</code>); смена LLM-параметров/провайдера → пересборка моделей.</li>
+</ul>
+<h3><code>POST /rag/config/reset</code></h3>
+<p>Сброс конфига к дефолтам + пересинхронизация:</p>
+<pre><code class="language-json">{ &quot;ok&quot;: true, &quot;config&quot;: {...} }</code></pre>
+<h2>4.7 Провайдер и модели</h2>
+<h3><code>GET /rag/provider</code></h3>
+<pre><code class="language-json">{
+  &quot;provider&quot;: &quot;ollama&quot;,
+  &quot;status_backend&quot;: true,
+  &quot;models&quot;: { &quot;all&quot;: [...], &quot;thinking&quot;: [...], &quot;embedding&quot;: [...] }
+}</code></pre>
+<h3><code>POST /rag/provider</code></h3>
+<p><code>{ "provider": "lmstudio" }</code> → <code>{"ok": true, "provider": "lmstudio", "config": {...}}</code>. <code>400</code> при недопустимом значении.</p>
+<h3><code>GET /rag/models</code></h3>
+<p>Перепроверяет бэкенд, если он был недоступен (<code>refresh_backend_models</code>), и отдаёт то же, что <code>/rag/provider</code>.</p>
+<h2>4.8 Парсинг файлов (отладка)</h2>
+<h3><code>POST /rag/parse</code></h3>
+<p><code>{ "file_path": "C:\\Docs\\file.docx" }</code>.</p>
+<ul>
+<li><code>200</code>: <code>{"ok": true, "page_count": 5, "content": "…markdown…"}</code></li>
+<li><code>404</code>: файл не найден.</li>
+<li><code>400</code>: нет file_path / неподдерживаемый формат (только <code>.doc/.docx/.pdf</code>).</li>
+<li><code>500</code>: ошибка парсера.</li>
+</ul>
+<h3><code>POST /rag/parse/stream</code> (SSE)</h3>
+<p>Поабзацная выдача: <code>chunk {type, data}</code> → … → <code>done {type, page_count}</code>; <code>error</code> при сбое.</p>
+<h2>4.9 Расписание ограничений использования</h2>
+<p>Единый источник расписания запрета — <b>ядро</b> (<code>Settings.usage_restrictions</code> в <code>settings.json</code>). Web UI хранит расписание в SQLite больше не может — только проксирует эти endpoints. Логика: <code>rag_engine/schedule.py</code> (валидация, <code>applies_now</code> по локальному времени сервера ядра).</p>
+<p>Ограничение: <code>{id, days:[0..6] (0=Пн), start_time "HH:MM", end_time "HH:MM", message, active}</code>. <code>start == end</code> — весь день; диапазон через полночь поддерживается.</p>
+<h3><code>GET /rag/schedule</code></h3>
+<pre><code class="language-json">{
+  &quot;server_time&quot;: &quot;2026-10-13T22:40:00&quot;,
+  &quot;server_time_hm&quot;: &quot;22:40&quot;,
+  &quot;weekday&quot;: 0,
+  &quot;restrictions&quot;: [
+    { &quot;id&quot;: 1, &quot;days&quot;: [0,1,2,3,4], &quot;start_time&quot;: &quot;18:00&quot;, &quot;end_time&quot;: &quot;09:00&quot;,
+      &quot;message&quot;: &quot;…&quot;, &quot;active&quot;: true, &quot;applies_now&quot;: true }
+  ]
+}</code></pre>
+<h3><code>POST /rag/schedule</code></h3>
+<p><code>{days, start_time, end_time, message, active?}</code> → <code>200 {ok, …schedule_response}</code> (id назначает сервер). Ошибки валидации — <code>400 {error}</code>.</p>
+<h3><code>PUT /rag/schedule/<id></code></h3>
+<p>Частичное обновление (любые поля из <code>days/start_time/end_time/message/active</code>). <code>404</code> если id нет.</p>
+<h3><code>DELETE /rag/schedule/<id></code></h3>
+<p><code>200 {ok, …}</code>. <code>404</code> если id нет.</p>
+<h2>4.10 Итоговая таблица</h2>
+<table><tr><th>Метод</th><th>Путь</th><th>Формат</th><th>Назначение</th></tr><tr><td>GET</td><td><code>/rag/health</code></td><td>JSON</td><td>проверка доступности</td></tr><tr><td>GET</td><td><code>/rag/info</code></td><td>JSON</td><td>метаданные/версия/статус</td></tr><tr><td>GET</td><td><code>/rag/engine/status</code></td><td>JSON</td><td>полный статус движка</td></tr><tr><td>POST</td><td><code>/rag/agent/stream</code></td><td>SSE</td><td>чат/агентный ответ</td></tr><tr><td>POST</td><td><code>/rag/memos</code></td><td>JSON</td><td>все записки по теме</td></tr><tr><td>POST</td><td><code>/rag/memos/stream</code></td><td>SSE</td><td>то же с reasoning</td></tr><tr><td>POST</td><td><code>/rag/index</code></td><td>JSON</td><td>запуск синхронизации (<code>?reset=true</code>)</td></tr><tr><td>GET</td><td><code>/rag/index/status</code></td><td>JSON</td><td>статус синхронизации</td></tr><tr><td>GET</td><td><code>/rag/index/stats</code></td><td>JSON</td><td>статистика</td></tr><tr><td>GET/POST</td><td><code>/rag/folders</code></td><td>JSON</td><td>папки синхронизации</td></tr><tr><td>GET/PATCH</td><td><code>/rag/config</code></td><td>JSON</td><td>конфигурация</td></tr><tr><td>POST</td><td><code>/rag/config/reset</code></td><td>JSON</td><td>сброс конфига</td></tr><tr><td>GET/POST</td><td><code>/rag/provider</code></td><td>JSON</td><td>провайдер</td></tr><tr><td>GET</td><td><code>/rag/models</code></td><td>JSON</td><td>модели бэкенда</td></tr><tr><td>POST</td><td><code>/rag/parse</code></td><td>JSON</td><td>парсинг файла</td></tr><tr><td>POST</td><td><code>/rag/parse/stream</code></td><td>SSE</td><td>парсинг поабзацно</td></tr><tr><td>GET/POST</td><td><code>/rag/schedule</code></td><td>JSON</td><td>расписание запрета: список / добавить</td></tr><tr><td>PUT/DELETE</td><td><code>/rag/schedule/<id></code></td><td>JSON</td><td>обновить / удалить ограничение</td></tr></table>
+</main>
+<footer>Сгенерировано из <code>doc/*.md</code> — при правках редактируйте markdown, затем перегенерируйте doc_html.</footer>
+</body>
+</html>

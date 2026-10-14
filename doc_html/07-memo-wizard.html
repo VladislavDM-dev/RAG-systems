@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>07. Мастер записки /create · RAG System Docs</title>
+<link rel="stylesheet" href="style.css">
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+<script>
+  window.addEventListener('DOMContentLoaded', function () {
+    if (window.mermaid) {
+      mermaid.initialize({ startOnLoad: true, theme: 'base',
+        themeVariables: { 'fontSize': '14px', 'primaryColor': '#eef4ff',
+          'primaryBorderColor': '#9cb4e8', 'lineColor': '#5b6b8c' } });
+    }
+  });
+</script>
+</head>
+<body>
+<nav class="topnav">
+  <a class="navtitle" href="index.html">RAG System Docs</a>
+  <a href="00-README.html">00.</a> <a href="01-architecture.html">01.</a> <a href="02-core-rag-system.html">02.</a> <a href="03-web-ui.html">03.</a> <a href="04-api-core.html">04.</a> <a href="05-api-webui.html">05.</a> <a href="06-database.html">06.</a> <span class="cur">07.</span> <a href="08-installation.html">08.</a> <a href="09-testing.html">09.</a> <a href="10-build.html">10.</a> <a href="11-troubleshooting.html">11.</a> <a href="12-git-and-conventions.html">12.</a>
+</nav>
+<header class="pagetitle">
+  <h1>07. Мастер записки /create</h1>
+  <p class="srcnote">Исходник: <code>doc/07-memo-wizard.md</code> · Mermaid-диаграммы рендерятся браузером (CDN); при отключённом JS показан код диаграммы.</p>
+</header>
+<main>
+<h1>07. Мастер служебной записки <code>/create</code> и шаблон <code>mmo.dotx</code></h1>
+<h2>7.1 Что это</h2>
+<p>Из чата команда <code>/create &lt;тема&gt;</code> открывает пошаговый мастер:</p>
+<ol>
+<li><strong>Тема</strong> → ядро генерирует <strong>3–5 вариантов текста</strong> записки (RAG-промптом, JSON).</li>
+<li><strong>Поля</strong> → выбирается вариант тела, подставляются значения шапки (Кому/От/ФИО и т.д.) — варианты подбирает RAG, ручные поля (дата, номер) — вручную.</li>
+<li><strong>Проверка</strong> → предпросмотр, скачивание <code>.docx</code> и сохранение в избранное/историю.</li>
+</ol>
+<h2>7.2 Поток мастера</h2>
+<div class="mmd"><div class="mermaid">flowchart TD
+    A["/create &lt;тема&gt;"] --&gt; B{"Тема передана в команде?"}
+    B --&gt;|нет| C["step = 'topic'\nбот: 'Укажите тему'"]
+    B --&gt;|да| D["offerVariants()"]
+    C --&gt; D
+    D --&gt; E["GET /api/memo/template → поля шаблона"]
+    D --&gt; F["generateVariants(): streamAgentRequest\n(/api/chat/stream, system_prompt = MEMO_VARIANTS_SYSTEM_PROMPT)"]
+    E --&gt; G["generateFieldOptions(keys): JSON-запрос\nподбор вариантов значения полей из RAG"]
+    F --&gt; H["renderFields(): variant-picks + textarea + поля"]
+    G --&gt; H
+    H --&gt; I{"Пользователь: 'Далее'"}
+    I --&gt; J["collectFields()"]
+    J --&gt; K["showResult(): step='check', предпросмотр\n(renderMemoPreview) + источники"]
+    K --&gt; L["Кнопки: Редактировать / Скачать .docx / Новая"]
+    L --&gt; M["localStorage→ server: saveState() на каждом шаге"]
+    L --&gt; N["saveAndDownload(): POST /api/memo/docx → .docx\n+ сейв в избранное и историю"]</div><details class="mmdcode"><summary>Код диаграммы</summary><pre class="diagram">flowchart TD
+    A["/create &lt;тема&gt;"] --&gt; B{"Тема передана в команде?"}
+    B --&gt;|нет| C["step = 'topic'\nбот: 'Укажите тему'"]
+    B --&gt;|да| D["offerVariants()"]
+    C --&gt; D
+    D --&gt; E["GET /api/memo/template → поля шаблона"]
+    D --&gt; F["generateVariants(): streamAgentRequest\n(/api/chat/stream, system_prompt = MEMO_VARIANTS_SYSTEM_PROMPT)"]
+    E --&gt; G["generateFieldOptions(keys): JSON-запрос\nподбор вариантов значения полей из RAG"]
+    F --&gt; H["renderFields(): variant-picks + textarea + поля"]
+    G --&gt; H
+    H --&gt; I{"Пользователь: 'Далее'"}
+    I --&gt; J["collectFields()"]
+    J --&gt; K["showResult(): step='check', предпросмотр\n(renderMemoPreview) + источники"]
+    K --&gt; L["Кнопки: Редактировать / Скачать .docx / Новая"]
+    L --&gt; M["localStorage→ server: saveState() на каждом шаге"]
+    L --&gt; N["saveAndDownload(): POST /api/memo/docx → .docx\n+ сейв в избранное и историю"]</pre></details></div>
+<p>Состояние мастера хранится <strong>на сервере</strong> (<code>MemoState</code>), а не в localStorage: <code>saveState()</code> вызывается на каждом изменении (выбор варианта, ввод полей, шаги). При перезагрузке страницы <code>restoreSession()</code> восстанавливает шаг (<code>fields</code>/<code>check</code>) и продолжает с того же места.</p>
+<p>Выход из мастера: команды <code>/cancel</code> или <code>/new</code>; <code>clearChat()</code> тоже сбрасывает мастер.</p>
+<h2>7.3 JSON-промпты мастера</h2>
+<h3>Варианты текста (<code>MEMO_VARIANTS_SYSTEM_PROMPT</code>)</h3>
+<p>Промпт формируется в <code>static/js/memo.js</code>:</p>
+<pre><code>&quot;Служебная записка по теме: &lt;тема&gt;. Подготовь несколько вариантов текста.&quot;,
+system_prompt: {
+  &quot;Ты — помощник, который генерирует варианты текста служебной записки.
+   ... Верни ОДИН JSON-объект вида {&quot;variants&quot;: [...], &quot;sources&quot;: [{&quot;file_name&quot;,&quot;file_path&quot;}]}
+   с 3–5 вариантами ... НЕ добавляй ничего, кроме JSON.&quot;
+}
+</code></pre>
+<p>Ответ парсится <code>parseMemoJson()</code> (выделяет JSON-структуру из текста, устойчиво к обвязке) → <code>extractMemoVariants()</code> (извлекает список <code>{text, sources}</code>).</p>
+<h3>Варианты полей (<code>generateFieldOptions</code>)</h3>
+<p>Отдельный запрос к LLM с JSON-схемой ключей:</p>
+<pre><code>{&quot;ключ&quot;: [&quot;вариант1&quot;, &quot;вариант2&quot;, ...], ...}
+</code></pre>
+<p>Для парных полей (<code>recipient_position↔recipient_name</code>, <code>sender_position↔sender_short_name</code>, <code>executor↔phone</code>) запрашивается соответствие вариантов по индексу. В ответе очистка мусора через <code>normalizeFieldOptions()</code> (отбрасываются "xxx", департаменты в executor и т.п.). Если RAG не дал значений <code>executor</code>/<code>phone</code> — подставляются шаблонные («Иванов И.И.», «+7 (900) 123-45-67»).</p>
+<h2>7.4 Экран полей</h2>
+<ul>
+<li>Выбор варианта тела — кнопки «Вариант 1..N» (<code>memo-body-pick</code>), текст редактируется в <code>&lt;textarea id="memo-edit-body"&gt;</code>.</li>
+<li>Для каждого поля — кнопки-варианты из RAG (<code>memo-option</code>) + переключатель «ввести своё».</li>
+<li><code>date</code> (ввод типа <code>date</code>, конвертация <code>YYYY-MM-DD ↔ DD.MM.YYYY</code>) и <code>memo_number</code> — только вручную.</li>
+<li>Подбор вариантов по клику «Предложить поля из RAG заново».</li>
+<li>Связки пар: выбор варианта по индексу из парного поля.</li>
+</ul>
+<h2>7.5 Предпросмотр и сборка <code>.docx</code></h2>
+<p>Перед скачиванием формируется предпросмотр (<code>renderMemoPreview</code>):</p>
+<pre><code>Кому: &lt;должность&gt;
+      &lt;ФИО&gt;
+Служебная записка № &lt;номер&gt;/&lt;отдел&gt; от &lt;дата&gt;
+
+&lt;тело&gt;
+
+С уважением, &lt;должность&gt; &lt;ФИО&gt;
+</code></pre>
+<p><code>POST /api/memo/docx</code> (тело = все поля) → <code>memo_docx.generate_memo_docx(fields)</code> → бинарный файл <code>sluzhebnaya_zapiska.docx</code>.</p>
+<h2>7.6 Шаблон <code>mmo.dotx</code> и <code>memo_docx.py</code></h2>
+<p>Шаблон лежит в <strong>корне репозитория</strong>: <code>C:\Scripts\RAG systems\docx_templates\mmo.dotx</code> (бинарный, в git). Назначение директории: env <code>MEMO_TEMPLATE_DIR</code> (по умолчанию <code>&lt;PROJECT_ROOT&gt;/docx_templates</code>, где <code>PROJECT_ROOT</code> — родитель папки Web UI, т.е. корень репозитория).</p>
+<div class="mmd"><div class="mermaid">flowchart LR
+    A["mmo.dotx\n(плейсхолдеры {{ key }})"] --&gt; B["_fix_content_type():\n.dotx → .docx (content-type)"]
+    B --&gt; C["Document(tmp)"]
+    C --&gt; D["discover_template_fields():\nсписок {{ key }} из абзацев,\nтаблиц, header/footer"]
+    D --&gt; E["get_template_fields():\nкэш по mtime файла"]
+    E --&gt; F["generate_memo_docx(fields):\nподстановка полей во все части"]
+    F --&gt; G["{{ body }} → разбивается на абзацы\n(_insert_paragraph_after)"]
+    G --&gt; H["io.BytesIO → send_file"]</div><details class="mmdcode"><summary>Код диаграммы</summary><pre class="diagram">flowchart LR
+    A["mmo.dotx\n(плейсхолдеры {{ key }})"] --&gt; B["_fix_content_type():\n.dotx → .docx (content-type)"]
+    B --&gt; C["Document(tmp)"]
+    C --&gt; D["discover_template_fields():\nсписок {{ key }} из абзацев,\nтаблиц, header/footer"]
+    D --&gt; E["get_template_fields():\nкэш по mtime файла"]
+    E --&gt; F["generate_memo_docx(fields):\nподстановка полей во все части"]
+    F --&gt; G["{{ body }} → разбивается на абзацы\n(_insert_paragraph_after)"]
+    G --&gt; H["io.BytesIO → send_file"]</pre></details></div>
+<h3>Как определяются поля</h3>
+<p><code>discover_template_fields(path)</code> обходит <strong>все</strong> части документа (<code>_all_parts</code>): абзацы, все ячейки таблиц, header/footer (не связанные с предыдущим). Ищет плейсхолдеры <code>{{ key }}</code> (regex <code>\{\{\s*([a-zA-Z0-9_]+)\s*\}\}</code>) в порядке появления. Если шаблона нет или полей нет — фолбэк <code>DEFAULT_FIELDS</code>:</p>
+<pre><code>recipient_position, recipient_name, memo_number, date, body,
+sender_position, sender_short_name
+</code></pre>
+<p><code>get_template_fields()</code> кэширует по <code>mtime</code> — правка <code>mmo.dotx</code> в Word подхватывается <strong>без перезапуска Web UI</strong> (там же, где менялись плейсхолдеры).</p>
+<h3>Справочник полей (<code>FIELD_LABELS</code> / <code>FIELD_HINTS</code>)</h3>
+<table>
+<thead>
+<tr>
+<th>Ключ</th>
+<th>Метка (UI)</th>
+<th>Примечание</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>recipient_position</code></td>
+<td>Кому (должность)</td>
+<td></td>
+</tr>
+<tr>
+<td><code>recipient_name</code></td>
+<td>Кому (ФИО)</td>
+<td></td>
+</tr>
+<tr>
+<td><code>memo_number</code></td>
+<td>Номер служебной записки</td>
+<td>вручную</td>
+</tr>
+<tr>
+<td><code>department</code></td>
+<td>Отдел</td>
+<td></td>
+</tr>
+<tr>
+<td><code>date</code></td>
+<td>Дата</td>
+<td>вручную (date-input)</td>
+</tr>
+<tr>
+<td><code>body</code></td>
+<td>Текст служебной записки</td>
+<td>hint: «оставьте пустым — сгенерируем по RAG»</td>
+</tr>
+<tr>
+<td><code>sender_position</code></td>
+<td>От (должность)</td>
+<td>в UI «Подписывающее лицо (должность)»</td>
+</tr>
+<tr>
+<td><code>sender_short_name</code></td>
+<td>От (ФИО, кратко)</td>
+<td>в UI «Подписывающее лицо (ФИО, кратко)»</td>
+</tr>
+<tr>
+<td><code>executor</code></td>
+<td>ФИО исполнителя</td>
+<td></td>
+</tr>
+<tr>
+<td><code>phone</code></td>
+<td>Телефон исполнителя</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<h3>Сборка документа</h3>
+<ul>
+<li>Вход: <code>fields</code> в формате <code>{key: value}</code>.</li>
+<li><code>_fix_content_type(TEMPLATE_PATH, tmp)</code> — копирует <code>.dotx</code> в <code>.docx</code> с заменой <code>wordprocessingml.template.main+xml</code> → <code>wordprocessingml.document.main+xml</code> (иначе Word откроет как шаблон).</li>
+<li>Для каждого абзаца/ячейки, содержащего <code>{{</code>, выполняется <code>substitute()</code> — замена <code>{{ key }}</code> на значение.</li>
+<li>Абзац с <code>{{ body }}</code>: если тело содержит переводы строк — разбивается на отдельные абзацы (<code>_replace_paragraph_text</code> для первого, <code>_insert_paragraph_after</code> для остальных); если пусто — очищается.</li>
+<li>Результат сохраняется в <code>io.BytesIO</code> и отдаётся <code>send_file</code>.</li>
+</ul>
+<h3>Админ-операции с шаблоном</h3>
+<ul>
+<li><code>POST /api/admin/memo/template/reload</code> — принудительное перечитывание (<code>reload_template_fields</code>, сбрасывает mtime-кэш).</li>
+<li><code>POST /api/admin/memo/template</code> (multipart <code>file</code>, только <code>.dotx</code>) — <code>save_template_file(file.read())</code> → перезапись <code>mmo.dotx</code> + перечитывание полей.</li>
+<li><code>get_template_info()</code> — путь, mtime, размер, поля, labels, hints (<code>GET /api/memo/template</code>).</li>
+</ul>
+<h2>7.7 Сохранение результата</h2>
+<p>После скачивания <code>.docx</code> клиент:
+- сохраняет в <strong>избранное</strong> (<code>History.saveAnswerToFavorites('Служебная записка: &lt;тема&gt;', previewText, sources)</code>);
+- сохраняет <strong>в историю</strong> (<code>Chat.saveMessage(...)</code>, role bot, content = предпросмотр, sources).</p>
+<h2>7.8 Важное ограничение (.docx на удалённом ПК)</h2>
+<p><code>memo_docx.TEMPLATE_PATH</code> опирается на локальный шаблон. В <strong>собранной</strong> (frozen) версии шаблон должен лежать в <code>&lt;exe_dir&gt;/_internal/docx_templates/mmo.dotx</code> (env <code>MEMO_TEMPLATE_DIR</code> выставляет <code>hook_runtime.py</code>). Если сборка старая/неполная — <code>POST /api/memo/docx</code> вернёт 500 «Шаблон служебной записки не найден: …». При развёртывании обязательно проверяйте наличие <code>_internal\docx_templates\mmo.dotx</code> (см. также <code>11-troubleshooting.md</code>).</p>
+<h2>7.9 Связанные системные промпты (<code>config.py</code>)</h2>
+<ul>
+<li><code>SYSTEM_PROMPT_MEMO</code> — обучающий для <code>/create</code> при обычном RAG-вопросе (оформить как записку).</li>
+<li><code>SYSTEM_PROMPT_MEMO_VARIANTS</code> — серверная версия (в <code>config.py</code>), в UI дублируется как <code>MEMO_VARIANTS_SYSTEM_PROMPT</code> (JS). Требование: «Не добавляй ничего, кроме JSON».</li>
+</ul>
+</main>
+<footer>Сгенерировано из <code>doc/*.md</code> — при правках редактируйте markdown, затем перегенерируйте doc_html.</footer>
+</body>
+</html>

@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>03. Web UI · RAG System Docs</title>
+<link rel="stylesheet" href="style.css">
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+<script>
+  window.addEventListener('DOMContentLoaded', function () {
+    if (window.mermaid) {
+      mermaid.initialize({ startOnLoad: true, theme: 'base',
+        themeVariables: { 'fontSize': '14px', 'primaryColor': '#eef4ff',
+          'primaryBorderColor': '#9cb4e8', 'lineColor': '#5b6b8c' } });
+    }
+  });
+</script>
+</head>
+<body>
+<nav class="topnav">
+  <a class="navtitle" href="index.html">RAG System Docs</a>
+  <a href="00-README.html">00.</a> <a href="01-architecture.html">01.</a> <a href="02-core-rag-system.html">02.</a> <span class="cur">03.</span> <a href="04-api-core.html">04.</a> <a href="05-api-webui.html">05.</a> <a href="06-database.html">06.</a> <a href="07-memo-wizard.html">07.</a> <a href="08-installation.html">08.</a> <a href="09-testing.html">09.</a> <a href="10-build.html">10.</a> <a href="11-troubleshooting.html">11.</a> <a href="12-git-and-conventions.html">12.</a>
+</nav>
+<header class="pagetitle">
+  <h1>03. Web UI</h1>
+  <p class="srcnote">Исходник: <code>doc/03-web-ui.md</code> · Mermaid-диаграммы рендерятся браузером (CDN); при отключённом JS показан код диаграммы.</p>
+</header>
+<main>
+<h1>03. RAG System Web UI</h1>
+<p>Папка: <code>C:\Scripts\RAG systems\RAG System Web UI</code> (свой <code>.venv</code>).</p>
+<h2>3.1 Состав</h2>
+<pre><code class="language-text">RAG System Web UI/
+├── app.py            # create_app(), регистрация blueprints, _seed_admin
+├── config.py         # Config (env-переменные, промпты, MEMO_JS_VERSION)
+├── extensions.py     # db, login_manager, csrf
+├── models.py         # User, Conversation, Message, Favorite, MemoState, Notification, NotificationDismissed, AdminMessage
+├── auth.py           # /login /register /logout
+├── chat.py           # / и /api/chat/stream, conversations, messages, favorites, /api/status, /api/parse,
+│                     # /api/schedule, /api/notifications, /api/feedback, /api/password
+├── schedule.py       # get_restriction_message() — проверка запрета через ядро (applies_now)
+├── memo.py           # /api/memo/template, /api/memo/state, /api/memo/docx, админ-шаблон
+├── memo_docx.py      # генерация .docx по mmo.dotx, discover_template_fields
+├── admin.py          # /admin + /api/admin/*
+├── api_client.py     # RAGClient — обёртка над RAG API (REST + SSE)
+├── build.spec        # PyInstaller onedir
+├── hook_runtime.py   # frozen: MEMO_TEMPLATE_DIR, DATABASE_URL, SECRET_KEY_FILE
+├── requirements.txt  # flask, sqlalchemy, login, wtf, requests, python-docx, pytest
+├── templates/        # base, chat/index, admin/index, auth/{login,register}
+├── static/
+│   ├── css/          # bootstrap.min.css, bootstrap-icons.css, style.css
+│   └── js/           # bootstrap.bundle, marked.min, dompurify.min,
+│                     # utils, history, chat, sync, memo, notifications, app, admin
+├── data/             # app.db, secret_key (в .gitignore)
+└── tests/            # conftest (FakeRAG) + test_app.py</code></pre>
+<h2>3.2 <code>app.py</code> — фабрика приложения</h2>
+<div class="mmd"><div class="mermaid">flowchart TD
+    A[&quot;create_app()&quot;] --&gt; B[&quot;app.config.from_object(Config)&quot;]
+    B --&gt; C[&quot;db / login_manager / csrf .init_app&quot;]
+    C --&gt; D[&quot;app.rag = RAGClient(RAG_API_URL)&quot;]
+    D --&gt; E[&quot;login_manager.user_loader&quot;]
+    E --&gt; F[&quot;регистрация blueprints: auth, chat, memo, admin&quot;]
+    F --&gt; G[&quot;errorhandler 404 → jsonify&quot;]
+    G --&gt; H[&quot;app_context: makedirs(data), db.create_all(), _seed_admin&quot;]</div><details class="mmdcode"><summary>Код диаграммы</summary><pre class="diagram">flowchart TD
+    A[&quot;create_app()&quot;] --&gt; B[&quot;app.config.from_object(Config)&quot;]
+    B --&gt; C[&quot;db / login_manager / csrf .init_app&quot;]
+    C --&gt; D[&quot;app.rag = RAGClient(RAG_API_URL)&quot;]
+    D --&gt; E[&quot;login_manager.user_loader&quot;]
+    E --&gt; F[&quot;регистрация blueprints: auth, chat, memo, admin&quot;]
+    F --&gt; G[&quot;errorhandler 404 → jsonify&quot;]
+    G --&gt; H[&quot;app_context: makedirs(data), db.create_all(), _seed_admin&quot;]</pre></details></div>
+<p><code>_seed_admin</code>: создаёт пользователя <code>admin</code> (роль <code>admin</code>) с паролем из <code>DEFAULT_ADMIN_PASSWORD</code> (по умолчанию <code>admin123</code>), если его нет.</p>
+<p>Запуск: <code>port = app.config["PORT"]</code>, <code>app.run(debug=False, host="0.0.0.0", port=port, use_reloader=False)</code>.</p>
+<h2>3.3 <code>config.py</code> — Config</h2>
+<table><tr><th>Параметр</th><th>По умолчанию</th><th>Примечание</th></tr><tr><td><code>SECRET_KEY</code></td><td>генерируется</td><td>из <code>SECRET_KEY</code> или <code>SECRET_KEY_FILE</code> (по умолч. <code>data/secret_key</code>)</td></tr><tr><td><code>SQLALCHEMY_DATABASE_URI</code></td><td><code>sqlite:///data/app.db</code></td><td>можно переопределить <code>DATABASE_URL</code></td></tr><tr><td><code>RAG_API_URL</code></td><td><code>http://127.0.0.1:11455/rag</code></td><td>адрес ядра</td></tr><tr><td><code>PORT</code></td><td><code>80</code></td><td>порт Web UI</td></tr><tr><td><code>MEMO_TEMPLATE_DIR</code></td><td><code><проект>/../docx_templates</code></td><td>каталог <code>mmo.dotx</code></td></tr><tr><td><code>OPEN_REGISTRATION</code></td><td><code>true</code></td><td>разрешить регистрацию</td></tr><tr><td><code>DEFAULT_ADMIN_PASSWORD</code></td><td><code>admin123</code></td><td>пароль seed-админа</td></tr><tr><td><code>MEMO_JS_VERSION</code></td><td><code>"20261013-02"</code></td><td>версия кэширования JS/CSS (<code>?v=...</code>)</td></tr></table>
+<p>Системные промпты:</p>
+<ul>
+<li><code>SYSTEM_PROMPT_RAG</code> — обычный вопрос: развёрнутый ответ по контексту, не выдумывать.</li>
+<li><code>SYSTEM_PROMPT_MEMO</code> — команда <code>/create</code>: оформить как служебную записку (Кому, От, заголовок, основная часть, вывод).</li>
+<li><code>SYSTEM_PROMPT_MEMO_VARIANTS</code> — для мастер-вариантов (JSON <code>{"variants": [...], "sources": [...]}</code>).</li>
+<li><code>SYSTEM_PROMPT_MEMO_LIST</code> — перечисление записок (не используется в текущем коде чата; задекларирован в config).</li>
+</ul>
+<p><code>COMMAND_CREATE = "/create"</code>.</p>
+<h2>3.4 <code>extensions.py</code></h2>
+<p>Синглтоны <code>db = SQLAlchemy()</code>, <code>login_manager = LoginManager()</code> (<code>login_view = "auth.login_page"</code>), <code>csrf = CSRFProtect()</code>.</p>
+<h2>3.5 <code>models.py</code></h2>
+<p>См. документ <code>06-database.md</code>. Модели: <code>User</code> (password хэш, <code>is_admin</code>), <code>Conversation</code>, <code>Message</code>, <code>Favorite</code>, <code>MemoState</code>, <code>Notification</code> + <code>NotificationDismissed</code>, <code>AdminMessage</code>. Расписание запрета в SQLite <b>не</b> хранится — источник в ядре (см. <code>schedule.py</code> и 04/05).</p>
+<h2>3.6 <code>auth.py</code></h2>
+<ul>
+<li><code>GET/POST /login</code> — форма, проверка <code>check_password</code>, редирект на безопасный <code>next</code>.</li>
+<li><code>GET/POST /register</code> — проверки: <code>OPEN_REGISTRATION</code>, совпадение паролей, логин <code>[A-Za-z0-9_.-]{3,32}</code>, пароль ≥ 6, уникальность. Создаёт пользователя с ролью <code>user</code>, сразу логинит.</li>
+<li><code>POST /logout</code> — <code>logout_user()</code>.</li>
+</ul>
+<h2>3.7 <code>chat.py</code></h2>
+<h3><code>/</code> — chat/index.html</h3>
+<p><code>render_template("chat/index.html", user=current_user)</code> — единственная SPA-страница (см. 3.10).</p>
+<h3><code>POST /api/chat/stream</code> — главный endpoint</h3>
+<p>Перед обращением к ядру: если <code>get_restriction_message(current_user)</code> вернул текст (запрет по расписанию из ядра; админы не блокируются) → <code>403 {error, restricted: true}</code>. Далее проксирует <code>rag.stream_chat</code> / memos-SSE (см. 05).</p>
+<p>Приоритеты выбора системного промпта и ветки:</p>
+<div class="mmd"><div class="mermaid">flowchart TD
+    A[&quot;POST /api/chat/stream&quot;] --&gt; B{&quot;prompt пуст?&quot;}
+    B --&gt;|да| C[&quot;400&quot;]
+    B --&gt;|нет| D{&quot;memos_paged?&quot;}
+    D --&gt;|да| E[&quot;_stream_memos(prompt, temperature по умолч. 0.2)&quot;]
+    D --&gt;|нет| F{&quot;prompt начинается с /create?&quot;}
+    F --&gt;|да| G[&quot;system_prompt = SYSTEM_PROMPT_MEMO&quot;]
+    F --&gt;|нет| H[&quot;system_prompt = SYSTEM_PROMPT_RAG&quot;]
+    G --&gt; I{&quot;explicit system_prompt был задан клиентом?&quot;}
+    H --&gt; I
+    I --&gt;|нет| J[&quot;detect_memos_topic(prompt)&quot;]
+    J --&gt;|тема найдена| K[&quot;_stream_memos(auto_topic, 0.0)&quot;]
+    J --&gt;|None| L[&quot;SSE: агентный генератор (sources/reasoning/token/done/error)&quot;]
+    I --&gt;|да| L
+    E --&gt; M[&quot;SSE&quot;]
+    K --&gt; M
+    L --&gt; M</div><details class="mmdcode"><summary>Код диаграммы</summary><pre class="diagram">flowchart TD
+    A[&quot;POST /api/chat/stream&quot;] --&gt; B{&quot;prompt пуст?&quot;}
+    B --&gt;|да| C[&quot;400&quot;]
+    B --&gt;|нет| D{&quot;memos_paged?&quot;}
+    D --&gt;|да| E[&quot;_stream_memos(prompt, temperature по умолч. 0.2)&quot;]
+    D --&gt;|нет| F{&quot;prompt начинается с /create?&quot;}
+    F --&gt;|да| G[&quot;system_prompt = SYSTEM_PROMPT_MEMO&quot;]
+    F --&gt;|нет| H[&quot;system_prompt = SYSTEM_PROMPT_RAG&quot;]
+    G --&gt; I{&quot;explicit system_prompt был задан клиентом?&quot;}
+    H --&gt; I
+    I --&gt;|нет| J[&quot;detect_memos_topic(prompt)&quot;]
+    J --&gt;|тема найдена| K[&quot;_stream_memos(auto_topic, 0.0)&quot;]
+    J --&gt;|None| L[&quot;SSE: агентный генератор (sources/reasoning/token/done/error)&quot;]
+    I --&gt;|да| L
+    E --&gt; M[&quot;SSE&quot;]
+    K --&gt; M
+    L --&gt; M</pre></details></div>
+<p>Метрики из ядра передаются в <code>done</code> без изменений; sources дедуплицируются по <code>file_path</code> с сохранением лучшего score (<code>_dedupe_sources</code>).</p>
+<h3>Авто-детекция поиска записок (<code>detect_memos_topic</code>)</h3>
+<ul>
+<li>Не срабатывает, если запрос начинается с «обучающих» префиксов (<code>что такое</code>, <code>зачем нужн</code>, <code>как составить</code>, <code>как написать</code>, <code>какие бывают</code>, <code>виды</code>) — это вопрос о сути, а не поиск.</li>
+<li>Маркеры темы: <code>служебн</code>, <code>записк</code>, <code>мемо</code>, <code>служебк</code>.</li>
+<li>Из оставшихся слов отбрасываются стоп-слова (<code>найди</code>, <code>поиск</code>, <code>покажи</code>, <code>подбери</code>, <code>дай</code>, <code>все</code>, <code>нужно</code>, <code>для</code>, <code>о</code>, <code>об</code>, <code>по</code>, <code>про</code>, <code>теме</code>, <code>тема</code> и др.).</li>
+<li>Срабатывает <b>только</b> для обычных вопросов (без явного <code>system_prompt</code>) — чтобы мастер <code>/create</code> не перехватывался.</li>
+</ul>
+<h3><code>_stream_memos(rag, prompt, temperature)</code></h3>
+<ul>
+<li>Если у <code>rag</code> есть <code>memos_stream</code> → стримится <code>reasoning</code> + финальный <code>done</code> с <code>documents</code>, метриками.</li>
+<li>Fallback: <code>rag.memos()</code> (одним запросом, с тем же форматом ответа).</li>
+<li>Собирает текст <code>_memos_answer(documents, prompt)</code>: заголовки <code>### имя</code>, «Документ: путь», полный текст, «<b>Итого записок по теме: N</b>».</li>
+</ul>
+<h3>Остальные endpoints</h3>
+<ul>
+<li><code>GET /api/conversations</code> (пагинация <code>page/per_page</code>, по <code>updated_at desc</code>), <code>POST</code> (создание с title/Новый диалог), <code>GET/PUT/DELETE /api/conversations/<cid></code> (проверка владельца <code>user_id</code>).</li>
+<li><code>POST /api/messages</code> — создание сообщения (role, content, sources_json, memo_data_json); <code>skip_touch=true</code> не трогает <code>updated_at</code> диалога.</li>
+<li><code>GET/POST /api/favorites</code>, <code>DELETE /api/favorites/<fid></code>.</li>
+<li><code>GET /api/status</code> → <code>current_app.rag.index_status()</code> + <code>restricted</code>/<code>restriction_message</code> (блокировка для не-админов).</li>
+<li><code>GET /api/schedule</code> → данные расписания ядра + флаг блокировки текущего пользователя.</li>
+<li><code>GET /api/notifications</code>, <code>POST /api/notifications/<nid>/dismiss</code> — уведомления с отметками о закрытии.</li>
+<li><code>POST /api/feedback</code> (<code>{text}</code> ≤2000 симв.) — сообщение администратору.</li>
+<li><code>POST /api/password</code> — смена собственного пароля.</li>
+<li><code>POST /api/parse</code> → <code>rag.parse_file(file_path)</code>.</li>
+</ul>
+<h2>3.8 <code>memo.py</code> и <code>memo_docx.py</code></h2>
+<p>См. документ <code>07-memo-wizard.md</code>. Кратко:</p>
+<ul>
+<li><code>GET /api/memo/template</code> — поля шаблона (key/label/hint), путь, mtime.</li>
+<li><code>GET/POST/DELETE /api/memo/state</code> — сохранение состояния мастера на сервере (SQLite <code>memo_states</code>), не localStorage.</li>
+<li><code>POST /api/memo/docx</code> — генерация и отдача <code>sluzhebnaya_zapiska.docx</code>.</li>
+<li><code>POST /api/admin/memo/template/reload</code>, <code>POST /api/admin/memo/template</code> (upload .dotx) — только admin.</li>
+</ul>
+<h2>3.9 <code>admin.py</code></h2>
+<p><code>/admin</code> рендерит <code>admin/index.html</code> с данными: версия движка, число документов, индекс updated, провайдер, модели (all/thinking/embedding), конфиг.</p>
+<p>API (все требуют <code>login_required</code> + <code>admin_required</code>, исключая только сам просмотр):</p>
+<table><tr><th>Endpoint</th><th>Действие</th></tr><tr><td><code>GET /api/admin/info</code></td><td>статус движка + бэкенда</td></tr><tr><td><code>GET /api/admin/config</code>, <code>PATCH /api/admin/config</code></td><td>чтение/обновление конфига RAG</td></tr><tr><td><code>POST /api/admin/config/reset</code></td><td>сброс конфига + пересинхронизация</td></tr><tr><td><code>GET /api/admin/models</code></td><td>список моделей бэкенда</td></tr><tr><td><code>GET/POST /api/admin/provider</code></td><td>провайдер</td></tr><tr><td><code>GET/POST /api/admin/folders</code></td><td>папки синхронизации</td></tr><tr><td><code>POST /api/admin/sync</code></td><td>запуск синхронизации (<code>reset</code>)</td></tr><tr><td><code>GET/POST /api/admin/users</code>, <code>DELETE /api/admin/users/<uid></code>, <code>PUT /api/admin/users/<uid>/password</code></td><td>пользователи (нельзя удалить админа)</td></tr><tr><td><code>GET/POST /api/admin/schedule</code>, <code>PUT/DELETE /api/admin/schedule/<rid></code></td><td>прокси ядра <code>/rag/schedule</code> (валидация на ядре)</td></tr><tr><td><code>GET/POST /api/admin/notifications</code>, <code>DELETE /api/admin/notifications/<nid></code></td><td>уведомления для пользователей</td></tr><tr><td><code>GET /api/admin/messages</code>, <code>POST /api/admin/messages/<mid>/read</code>, <code>DELETE .../<mid></code></td><td>обратная связь от пользователей</td></tr></table>
+<p><code>admin_required</code> — декоратор, возвращающий <code>403</code> для не-админов.</p>
+<h2>3.10 Фронтенд (templates + static/js)</h2>
+<p>Страница чата подключает (порядок важен):</p>
+<pre><code class="language-text">bootstrap.bundle.min.js → marked.min.js → dompurify.min.js →
+utils.js → history.js → chat.js → sync.js → memo.js → notifications.js → app.js</code></pre>
+<p>Все пользовательские JS/CSS подключаются с <code>?v={{ config['MEMO_JS_VERSION'] }}</code> (антикэш).</p>
+<div class="mmd"><div class="mermaid">flowchart TD
+    A[&quot;app.js (DOMContentLoaded)&quot;] --&gt; B[&quot;Chat.init()&quot;]
+    A --&gt; C[&quot;History.loadConversations(true)&quot;]
+    A --&gt; D[&quot;Chat.restoreLastConversation()&quot;]
+    A --&gt; E[&quot;MemoWizard.restoreSession()&quot;]
+    A --&gt; F[&quot;Sync.start() — опрос /api/status каждые 500 мс&quot;]</div><details class="mmdcode"><summary>Код диаграммы</summary><pre class="diagram">flowchart TD
+    A[&quot;app.js (DOMContentLoaded)&quot;] --&gt; B[&quot;Chat.init()&quot;]
+    A --&gt; C[&quot;History.loadConversations(true)&quot;]
+    A --&gt; D[&quot;Chat.restoreLastConversation()&quot;]
+    A --&gt; E[&quot;MemoWizard.restoreSession()&quot;]
+    A --&gt; F[&quot;Sync.start() — опрос /api/status каждые 500 мс&quot;]</pre></details></div>
+<ul>
+<li><b>utils.js</b>: <code>generateUUID</code>, <code>escapeHtml</code>, <code>formatTimeAgo</code>, <code>renderMarkdown</code> (marked + DOMPurify), <code>apiFetch</code>, <code>showToast</code>, <code>copyText</code>, <code>streamSSE</code> (fetch-стрим, разбор <code>data: {}</code> строк, колбэки onEvent/onDone/onError/onSources/onReasoning/onToken).</li>
+<li><b>history.js</b>: пагинированная загрузка диалогов/избранного (по 50), рендер элементов, переименование/удаление, <code>saveAnswerToFavorites</code>, переключение вкладок, <code>clearAll</code> (удаляет все диалоги и избранное).</li>
+<li><b>chat.js</b>: <code>Chat</code> — отправка, стриминг, команды (<code>/create /memos /cancel /new /clear /help</code>, меню команд при вводе <code>/</code>), рендер ответа (markdown), <code><details></code>-блок «Размышления», кнопки источников → модалка просмотра файла, метрики (<code>setMetrics</code>: «N ток. · вход M · X с»), сохранение в историю. <code>memoListHtml</code> — список записок <code><details class="memo-item"></code> с кнопками «Скопировать путь» и «Сохр. в избранное»; <code>loadFavorite</code>, <code>restoreLastConversation</code>, <code>clearChat</code> (сбрасывает и мастер), <code>openFileModal/parseFile</code>.</li>
+<li><b>sync.js</b>: оверлей синхронизации, <code>Chat.serverReady</code> управляется по <code>is_syncing/initialized</code>.</li>
+<li><b>memo.js</b>: мастер записки (см. документ 07).</li>
+<li><b>notifications.js</b>: опрос <code>/api/notifications</code>, баннер уведомлений, dismiss по клику/крестику.</li>
+<li><b>admin.js</b>: статус, синхронизация с прогрессом, папки, пользователи, шаблон мемо, конфиг-форма, расписание (прокси ядра), уведомления, обратная связь.</li>
+</ul>
+<p>CSS: <code>static/css/style.css</code> — своя стилизация (чаты, memo-list, command-menu, sync-оверлей и т.д.) поверх Bootstrap 5.</p>
+<h2>3.11 <code>api_client.py</code> — RAGClient</h2>
+<p>Важно: Web UI <b>не</b> вызывает ядро напрямую — только через <code>RAGClient</code>.</p>
+<p>REST-методы (все с <code>timeout=60</code>, при ошибках возвращают <code>{}</code>/<code>{"error": ...}</code>): <code>health</code>, <code>info</code>, <code>engine_status</code>, <code>index_status</code>, <code>index_stats</code>, <code>trigger_sync(reset)</code>, <code>get_config</code>, <code>patch_config</code>, <code>reset_config</code>, <code>list_models</code>, <code>get_provider</code>, <code>set_provider</code>, <code>get_folders</code>, <code>set_folders</code>, <code>parse_file</code>, <code>get_schedule</code>, <code>add_schedule</code>, <code>update_schedule</code>, <code>delete_schedule</code> (последние четыре — прокси <code>/rag/schedule</code>).</p>
+<p>SSE-методы:</p>
+<ul>
+<li><code>stream_chat(prompt, system_prompt, top_k, temperature, exclude_node_ids)</code> → <code>POST /rag/agent/stream</code> (<code>timeout=(10, 600)</code>), парсинг SSE в словари-события.</li>
+<li><code>memos(prompt, temperature=.2, page_size=50, max_pages=15)</code> → <code>POST /rag/memos</code> (<code>timeout=900</code>).</li>
+<li><code>memos_stream(...)</code> → <code>POST /rag/memos/stream</code> (<code>timeout=(10, 900)</code>).</li>
+<li><code>parse_file_stream(file_path)</code> → <code>POST /rag/parse/stream</code>.</li>
+</ul>
+<p>SSE-парсер <code>_parse_sse_line</code>: ожидает <code>data: {...}</code> по JSON, прочие строки игнорируются.</p>
+</main>
+<footer>Сгенерировано из <code>doc/*.md</code> — при правках редактируйте markdown, затем перегенерируйте doc_html.</footer>
+</body>
+</html>

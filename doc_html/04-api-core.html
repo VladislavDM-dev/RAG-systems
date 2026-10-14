@@ -77,24 +77,36 @@
 <h2>4.3 Поиск служебных записок</h2>
 <h3><code>POST /rag/memos</code></h3>
 <p>Поиск <b>всех</b> записок по теме, в ответе — полный текст документов (собирается из docstore индекса, файлы повторно не парсятся).</p>
-<p>Тело: <code>prompt</code> (обязательно), опц. <code>temperature</code> (по умолч. 0.0), <code>page_size</code> (50), <code>max_pages</code> (15).</p>
+<p>По умолчанию — <b>быстрый путь</b> (гибрид FAISS+BM25, ~50 мс, без LLM). <code>use_llm=true</code> — legacy LLM-фильтр (~20 с на 200 доков).</p>
+<p>Тело: <code>prompt</code> (обязательно), опц. <code>temperature</code> (0.0), <code>page_size</code> (50 = топ-N файлов в быстром пути), <code>max_pages</code> (15, только LLM-путь), <code>use_llm</code> (false).</p>
 <p>Ответ <code>200</code>:</p>
 <pre><code class="language-json">{
   &quot;ok&quot;: true,
-  &quot;total&quot;: 3,
+  &quot;total&quot;: 17,
   &quot;pages&quot;: 1,
+  &quot;mode&quot;: &quot;fast&quot;,
+  &quot;tokens_in&quot;: 0,
+  &quot;tokens_out&quot;: 0,
+  &quot;elapsed&quot;: 0.05,
   &quot;documents&quot;: [
     { &quot;file_name&quot;: &quot;#297-….docx&quot;, &quot;file_path&quot;: &quot;C:\\…\\#297….docx&quot;, &quot;text&quot;: &quot;полный текст…&quot; }
   ]
 }</code></pre>
+<p><code>mode</code>: <code>"fast"</code> (быстрый путь) или <code>"llm"</code> (use_llm=true). В быстром пути <code>tokens_in/out = 0</code>.</p>
 <p>Ошибки: <code>400</code> (нет prompt), <code>503</code> (идет синхронизация / индекс не готов), <code>500</code> (прочее).</p>
 <h3><code>POST /rag/memos/stream</code> (SSE)</h3>
-<p>То же, но постранично стримится <code>reasoning</code> батч-LLM:</p>
+<p>То же, но потоково. События зависят от режима:</p>
+<p><b>Быстрый путь (<code>use_llm=false</code>, по умолчанию):</b></p>
+<ul>
+<li><code>sources</code>: <code>[{file_name, file_path, node_id, score}]</code> — найденные файлы (RRF-score);</li>
+<li><code>done</code>: <code>{documents, pages, prompt, tokens_in: 0, tokens_out: 0, elapsed, mode: "fast"}</code>.</li>
+</ul>
+<p><b>LLM-путь (<code>use_llm=true</code>):</b></p>
 <ul>
 <li><code>reasoning</code> — размышления батча;</li>
-<li><code>done</code>: <code>{documents, pages, prompt, tokens_in, tokens_out, elapsed}</code>;</li>
-<li><code>error</code>.</li>
+<li><code>done</code>: <code>{documents, pages, prompt, tokens_in, tokens_out, elapsed, mode: "llm"}</code>.</li>
 </ul>
+<p>Общее: <code>error</code>.</p>
 <h2>4.4 Индексация</h2>
 <h3><code>POST /rag/index</code></h3>
 <p>Запуск синхронизации (фоновый поток). <code>?reset=true</code> — полный сброс кэша + пересинхронизация.</p>
@@ -174,7 +186,7 @@
 <h3><code>DELETE /rag/schedule/<id></code></h3>
 <p><code>200 {ok, …}</code>. <code>404</code> если id нет.</p>
 <h2>4.10 Итоговая таблица</h2>
-<table><tr><th>Метод</th><th>Путь</th><th>Формат</th><th>Назначение</th></tr><tr><td>GET</td><td><code>/rag/health</code></td><td>JSON</td><td>проверка доступности</td></tr><tr><td>GET</td><td><code>/rag/info</code></td><td>JSON</td><td>метаданные/версия/статус</td></tr><tr><td>GET</td><td><code>/rag/engine/status</code></td><td>JSON</td><td>полный статус движка</td></tr><tr><td>POST</td><td><code>/rag/agent/stream</code></td><td>SSE</td><td>чат/агентный ответ</td></tr><tr><td>POST</td><td><code>/rag/memos</code></td><td>JSON</td><td>все записки по теме</td></tr><tr><td>POST</td><td><code>/rag/memos/stream</code></td><td>SSE</td><td>то же с reasoning</td></tr><tr><td>POST</td><td><code>/rag/index</code></td><td>JSON</td><td>запуск синхронизации (<code>?reset=true</code>)</td></tr><tr><td>GET</td><td><code>/rag/index/status</code></td><td>JSON</td><td>статус синхронизации</td></tr><tr><td>GET</td><td><code>/rag/index/stats</code></td><td>JSON</td><td>статистика</td></tr><tr><td>GET/POST</td><td><code>/rag/folders</code></td><td>JSON</td><td>папки синхронизации</td></tr><tr><td>GET/PATCH</td><td><code>/rag/config</code></td><td>JSON</td><td>конфигурация</td></tr><tr><td>POST</td><td><code>/rag/config/reset</code></td><td>JSON</td><td>сброс конфига</td></tr><tr><td>GET/POST</td><td><code>/rag/provider</code></td><td>JSON</td><td>провайдер</td></tr><tr><td>GET</td><td><code>/rag/models</code></td><td>JSON</td><td>модели бэкенда</td></tr><tr><td>POST</td><td><code>/rag/parse</code></td><td>JSON</td><td>парсинг файла</td></tr><tr><td>POST</td><td><code>/rag/parse/stream</code></td><td>SSE</td><td>парсинг поабзацно</td></tr><tr><td>GET/POST</td><td><code>/rag/schedule</code></td><td>JSON</td><td>расписание запрета: список / добавить</td></tr><tr><td>PUT/DELETE</td><td><code>/rag/schedule/<id></code></td><td>JSON</td><td>обновить / удалить ограничение</td></tr></table>
+<table><tr><th>Метод</th><th>Путь</th><th>Формат</th><th>Назначение</th></tr><tr><td>GET</td><td><code>/rag/health</code></td><td>JSON</td><td>проверка доступности</td></tr><tr><td>GET</td><td><code>/rag/info</code></td><td>JSON</td><td>метаданные/версия/статус</td></tr><tr><td>GET</td><td><code>/rag/engine/status</code></td><td>JSON</td><td>полный статус движка</td></tr><tr><td>POST</td><td><code>/rag/agent/stream</code></td><td>SSE</td><td>чат/агентный ответ</td></tr><tr><td>POST</td><td><code>/rag/memos</code></td><td>JSON</td><td>все записки по теме</td></tr><tr><td>POST</td><td><code>/rag/memos/stream</code></td><td>SSE</td><td>то же, sources+done (fast) / reasoning+done (llm)</td></tr><tr><td>POST</td><td><code>/rag/index</code></td><td>JSON</td><td>запуск синхронизации (<code>?reset=true</code>)</td></tr><tr><td>GET</td><td><code>/rag/index/status</code></td><td>JSON</td><td>статус синхронизации</td></tr><tr><td>GET</td><td><code>/rag/index/stats</code></td><td>JSON</td><td>статистика</td></tr><tr><td>GET/POST</td><td><code>/rag/folders</code></td><td>JSON</td><td>папки синхронизации</td></tr><tr><td>GET/PATCH</td><td><code>/rag/config</code></td><td>JSON</td><td>конфигурация</td></tr><tr><td>POST</td><td><code>/rag/config/reset</code></td><td>JSON</td><td>сброс конфига</td></tr><tr><td>GET/POST</td><td><code>/rag/provider</code></td><td>JSON</td><td>провайдер</td></tr><tr><td>GET</td><td><code>/rag/models</code></td><td>JSON</td><td>модели бэкенда</td></tr><tr><td>POST</td><td><code>/rag/parse</code></td><td>JSON</td><td>парсинг файла</td></tr><tr><td>POST</td><td><code>/rag/parse/stream</code></td><td>SSE</td><td>парсинг поабзацно</td></tr><tr><td>GET/POST</td><td><code>/rag/schedule</code></td><td>JSON</td><td>расписание запрета: список / добавить</td></tr><tr><td>PUT/DELETE</td><td><code>/rag/schedule/<id></code></td><td>JSON</td><td>обновить / удалить ограничение</td></tr></table>
 </main>
 <footer>Сгенерировано из <code>doc/*.md</code> — при правках редактируйте markdown, затем перегенерируйте doc_html.</footer>
 </body>

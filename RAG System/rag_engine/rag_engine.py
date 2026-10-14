@@ -99,7 +99,7 @@ class _ExcludeNodeIdsPostprocessor(BaseNodePostprocessor):
 class RAGEngine:
     """RAG-движок: индексация документов и поиск по ним."""
 
-    VERSION = "26.10.14"
+    VERSION = "26.10.15"
 
     def __init__(self, config: Optional[Settings] = None):
         self.cfg = config or Settings()
@@ -132,6 +132,10 @@ class RAGEngine:
         self.sync_start_time = 0
         self.sync_file = []
         self.items_processed = 0
+
+        # Гибридный BM25+FAISS (ленивая загрузка из кэша / сборка при синке)
+        self.bm25 = None           # rank_bm25.BM25Okapi по леммам чанков
+        self.bm25_ids: list = []   # node_id[i] соответствует корпусу bm25
         self.avg_time_per_item = 0.0
 
         self.cfg.save()
@@ -374,6 +378,12 @@ class RAGEngine:
             self.sync_progress = 95
             storage_context.persist(persist_dir=self.cache_dir + "/faiss_index")
 
+            self.sync_status = "Построение BM25-индекса (леммы)..."
+            try:
+                self._build_bm25()
+            except Exception as bm25_err:
+                print(f"[WARN] BM25 build failed: {bm25_err}")
+
             self.is_initialized = True
             self.sync_progress = 100
             self.sync_status = "Готово к работе"
@@ -384,6 +394,138 @@ class RAGEngine:
             print(f"Sync error: {e}")
         finally:
             self.is_syncing = False
+
+    # ------------------------------------------------------------------
+    #  BM25 (lemma-токены) — гибрид с FAISS
+    # ------------------------------------------------------------------
+    def _bm25_paths(self):
+        return (
+            os.path.join(self.cache_dir, "bm25.pkl"),
+            os.path.join(self.cache_dir, "bm25_ids.pkl"),
+        )
+
+    def _save_bm25(self):
+        if self.bm25 is None:
+            return
+        import pickle
+        p, pid = self._bm25_paths()
+        with open(p, "wb") as f:
+            pickle.dump(self.bm25, f)
+        with open(pid, "wb") as f:
+            pickle.dump(self.bm25_ids, f)
+
+    def _load_bm25(self) -> bool:
+        if self.bm25 is not None:
+            return True
+        import pickle
+        p, pid = self._bm25_paths()
+        if not (os.path.exists(p) and os.path.exists(pid)):
+            return False
+        try:
+            with open(p, "rb") as f:
+                self.bm25 = pickle.load(f)
+            with open(pid, "rb") as f:
+                self.bm25_ids = pickle.load(f)
+            if self.bm25 is None or not self.bm25_ids:
+                self.bm25 = None
+                self.bm25_ids = []
+                return False
+            return True
+        except Exception:
+            self.bm25 = None
+            self.bm25_ids = []
+            return False
+
+    def _build_bm25(self):
+        """Строит BM25Okapi по lemma-токенам всех чанков docstore и сохраняет в кэш."""
+        from rank_bm25 import BM25Okapi
+        from rag_engine.text_norm import tokenize_lemmas
+
+        by_path = self._index_nodes_by_path()
+        corpus_tokens = []
+        ids = []
+        for fp, nodes in by_path.items():
+            for nd in nodes:
+                text = nd.get_content() if hasattr(nd, "get_content") else ""
+                corpus_tokens.append(tokenize_lemmas(text))
+                ids.append(nd.node_id)
+        if not corpus_tokens:
+            self.bm25 = None
+            self.bm25_ids = []
+            return
+        self.bm25 = BM25Okapi(corpus_tokens)
+        self.bm25_ids = ids
+        self._save_bm25()
+        print(f"✅ BM25 построен: {len(ids)} чанков, {len(by_path)} файлов.")
+
+    def _hybrid_retrieve(self, prompt: str, top_k: int = 150):
+        """Гибрид: FAISS (смысл) + BM25 по леммам (точные совпадения/опечатки-формы).
+
+        Слияние — Reciprocal Rank Fusion (RRF, k=60). Возвращает список
+        NodeWithScore с гибридным score (больше = лучше), отсортированный по убыванию.
+        Если BM25 недоступен — чистый FAISS.
+        """
+        # --- FAISS ---
+        try:
+            retriever = self.index.as_retriever(similarity_top_k=top_k)
+            faiss_nodes = retriever.retrieve(prompt)
+        except Exception:
+            faiss_nodes = []
+
+        # --- BM25 (ленивая сборка при первом запросе, если кэша нет) ---
+        if not self._load_bm25():
+            try:
+                self._build_bm25()
+            except Exception as e:
+                print(f"[WARN] BM25 build failed: {e}")
+
+        bm25_hits = []  # [(node_id, NodeWithScore)]
+        if self.bm25 is not None:
+            from rag_engine.text_norm import tokenize_lemmas
+            q_tokens = tokenize_lemmas(prompt)
+            if q_tokens:
+                scores = self.bm25.get_scores(q_tokens)  # numpy array
+                # топ-k по BM25 score
+                order = scores.argsort()[::-1][:top_k]
+                docstore = self.index.docstore
+                for idx in order:
+                    s = float(scores[idx])
+                    if s <= 0:
+                        continue
+                    nid = self.bm25_ids[idx]
+                    try:
+                        node = docstore.get_node(nid)
+                    except Exception:
+                        continue
+                    bm25_hits.append((nid, NodeWithScore(node=node, score=s)))
+
+        # --- RRF слияние ---
+        k = 60
+        rrf_scores = {}
+        node_map = {}
+        # FAISS: score — distance (меньше лучше) → ранг по возрастанию distance
+        faiss_sorted = sorted(
+            faiss_nodes,
+            key=lambda n: float(getattr(n, "score", 1e9) or 1e9),
+        )
+        for rank, n in enumerate(faiss_sorted):
+            nid = n.node.node_id
+            rrf_scores[nid] = rrf_scores.get(nid, 0.0) + 1.0 / (k + rank + 1)
+            node_map[nid] = n
+        for rank, (nid, n) in enumerate(bm25_hits):
+            rrf_scores[nid] = rrf_scores.get(nid, 0.0) + 1.0 / (k + rank + 1)
+            if nid not in node_map:
+                node_map[nid] = n
+
+        fused = sorted(
+            (
+                NodeWithScore(node=node_map[nid].node, score=s)
+                for nid, s in rrf_scores.items()
+                if nid in node_map
+            ),
+            key=lambda n: -float(n.score),
+        )
+        return fused
 
     # ------------------------------------------------------------------
     #  Модели / провайдер
@@ -587,21 +729,22 @@ class RAGEngine:
         temperature: Optional[float] = None,
         page_size: int = 50,
         max_pages: int = 15,
+        use_llm: bool = False,
     ):
         """Находит все служебные записки по теме и возвращает полный текст.
 
-        Батчи по page_size чанков (исключая уже отданные node_id) — постраничный
-        обход индекса без повторов. Полный текст каждого документа собирается
-        из docstore индекса по file_path (узлы сортируются по start_char_idx) —
-        файлы повторно не парсятся и Word COM не задействуется.
+        По умолчанию — быстрый путь (гибрид FAISS+BM25, агрегация score по
+        файлам, без LLM, ~50 мс). use_llm=True — legacy батч-LLM-фильтр.
 
         Возвращает dict:
-          {ok, total, pages, documents: [{file_name, file_path, text}]}
+          {ok, total, pages, documents: [{file_name, file_path, text}],
+           tokens_in, tokens_out, elapsed, mode}
         либо {error: ...}.
         """
         result = None
         for event in self.memos_stream(prompt, temperature=temperature,
-                                       page_size=page_size, max_pages=max_pages):
+                                       page_size=page_size, max_pages=max_pages,
+                                       use_llm=use_llm):
             if event["type"] == "error":
                 return {"error": event["data"]}
             if event["type"] == "done":
@@ -610,6 +753,10 @@ class RAGEngine:
                     "total": len(event["documents"]),
                     "pages": event["pages"],
                     "documents": event["documents"],
+                    "tokens_in": event.get("tokens_in", 0),
+                    "tokens_out": event.get("tokens_out", 0),
+                    "elapsed": event.get("elapsed", 0.0),
+                    "mode": event.get("mode", "fast"),
                 }
         return result or {"error": "Нет данных"}
 
@@ -619,11 +766,16 @@ class RAGEngine:
         temperature: Optional[float] = None,
         page_size: int = 50,
         max_pages: int = 15,
+        use_llm: bool = False,
     ):
-        """Генератор SSE-событий для поиска записок (reasoning + done).
+        """Генератор SSE-событий для поиска записок.
 
-        Как memos(), но отдаёт reasoning батч-LLM по мере обхода индекса
-        (событие `reasoning`), а финал — `done` с документами.
+        use_llm=False (по умолчанию) — быстрый путь (~50 мс, без LLM):
+          гибридный ретрив (FAISS + BM25 по lemma-токенам, RRF) →
+          агрегация RRF-score по файлам → топ-N → сборка из docstore.
+
+        use_llm=True — legacy батч-LLM-фильтр (reasoning события, ~20 с
+        на 200 доков; оставлен для отладки/сравнения).
         """
         if self.is_syncing:
             yield {"type": "error", "data": "Идет синхронизация"}
@@ -635,10 +787,152 @@ class RAGEngine:
             yield {"type": "error", "data": "Поле 'prompt' обязательно"}
             return
 
+        prompt = str(prompt).strip()
         temperature = temperature if temperature is not None else 0.0
         page_size = max(1, int(page_size))
         max_pages = max(1, int(max_pages))
+        by_path = self._index_nodes_by_path()
 
+        # ------------------------------------------------------------------
+        #  Быстрый путь (по умолчанию): гибрид + агрегация score по файлам
+        # ------------------------------------------------------------------
+        if not use_llm:
+            t0 = time.perf_counter()
+            retrieval_top_k = max(page_size * 6, 300)
+
+            # --- FAISS (смысл, L2-distance) ---
+            try:
+                retriever = self.index.as_retriever(similarity_top_k=retrieval_top_k)
+                faiss_nodes = retriever.retrieve(prompt)
+            except Exception:
+                faiss_nodes = []
+
+            # --- BM25 по lemma-токенам (ленивая сборка) ---
+            if not self._load_bm25():
+                try:
+                    self._build_bm25()
+                except Exception as e:
+                    print(f"[WARN] BM25 build failed: {e}")
+
+            bm25_hits = []  # [(node_id, NodeWithScore)]
+            if self.bm25 is not None:
+                from rag_engine.text_norm import tokenize_lemmas
+                q_tokens = tokenize_lemmas(prompt)
+                if q_tokens:
+                    scores = self.bm25.get_scores(q_tokens)
+                    order = scores.argsort()[::-1][:retrieval_top_k]
+                    docstore = self.index.docstore
+                    for idx in order:
+                        s = float(scores[idx])
+                        if s <= 0:
+                            continue
+                        nid = self.bm25_ids[idx]
+                        try:
+                            node = docstore.get_node(nid)
+                        except Exception:
+                            continue
+                        bm25_hits.append((nid, NodeWithScore(node=node, score=s)))
+
+            # --- RRF слияние (для ранжирования) ---
+            k = 60
+            rrf_scores = {}
+            node_map = {}
+            file_min_l2 = {}  # file_path -> min L2 distance (для отсечки)
+            faiss_sorted = sorted(faiss_nodes, key=lambda x: float(getattr(x, "score", 1e9) or 1e9))
+            for rank, n in enumerate(faiss_sorted):
+                nid = n.node.node_id
+                rrf_scores[nid] = rrf_scores.get(nid, 0.0) + 1.0 / (k + rank + 1)
+                node_map[nid] = n
+                fp = (n.node.metadata or {}).get("file_path", "")
+                l2 = float(getattr(n, "score", 1e9) or 1e9)
+                if fp and (fp not in file_min_l2 or l2 < file_min_l2[fp]):
+                    file_min_l2[fp] = l2
+            for rank, (nid, n) in enumerate(bm25_hits):
+                rrf_scores[nid] = rrf_scores.get(nid, 0.0) + 1.0 / (k + rank + 1)
+                if nid not in node_map:
+                    node_map[nid] = n
+
+            # --- Агрегация: max RRF на файл, min L2 для отсечки ---
+            file_best = {}  # fp -> (max_rrf, best_node)
+            for nid, rrf in rrf_scores.items():
+                n = node_map.get(nid)
+                if n is None:
+                    continue
+                fp = (n.node.metadata or {}).get("file_path", "")
+                if not fp or fp not in by_path:
+                    continue
+                if fp not in file_best or rrf > file_best[fp][0]:
+                    file_best[fp] = (rrf, n.node)
+
+            if not file_best:
+                yield {
+                    "type": "done", "documents": [], "pages": 0,
+                    "prompt": prompt, "tokens_in": 0, "tokens_out": 0,
+                    "elapsed": round(time.perf_counter() - t0, 2),
+                    "mode": "fast",
+                }
+                return
+
+            # Отсечка: жёсткий top-N по RRF + мягкая L2-проверка (best*1.4
+            # как страховка от далёких файлов). В exp5 min*1.6 почти не
+            # фильтровал (дистанции тесные), реальную отбрасывание давал
+            # top-N cap — сохраняем ту же логику.
+            ranked = sorted(file_best.items(), key=lambda x: -x[1][0])
+            l2_values = [v for v in file_min_l2.values() if v < 1e8]
+            if l2_values:
+                best_l2 = min(l2_values)
+                l2_cutoff = best_l2 * 1.4
+            else:
+                l2_cutoff = float("inf")
+
+            max_files = min(page_size, 40)  # топ-N файлов
+            selected = []
+            for fp, (rrf, nd) in ranked:
+                if len(selected) >= max_files:
+                    break
+                l2 = file_min_l2.get(fp)
+                # Включаем если: (а) есть L2 и он в радиусе, или
+                # (б) файла нет в FAISS (только BM25) — сильное лексическое совпадение.
+                if l2 is None or l2 <= l2_cutoff:
+                    selected.append(fp)
+
+            # Событие sources — для прогресса UI.
+            sources = []
+            for fp in selected:
+                rrf, nd = file_best[fp]
+                meta = nd.metadata or {}
+                sources.append({
+                    "file_name": meta.get("file_name", fp),
+                    "file_path": fp,
+                    "node_id": nd.node_id,
+                    "score": round(rrf, 6),
+                })
+            yield {"type": "sources", "data": sources}
+
+            documents = []
+            for fp in selected:
+                documents.append({
+                    "file_name": os.path.basename(fp) or fp,
+                    "file_path": fp,
+                    "text": self._assemble_document_text(fp, by_path.get(fp)),
+                })
+
+            elapsed = time.perf_counter() - t0
+            yield {
+                "type": "done",
+                "documents": documents,
+                "pages": 1,
+                "prompt": prompt,
+                "tokens_in": 0,
+                "tokens_out": 0,
+                "elapsed": round(elapsed, 2),
+                "mode": "fast",
+            }
+            return
+
+        # ------------------------------------------------------------------
+        #  Медленный путь (use_llm=True): батч-LLM-фильтр (legacy)
+        # ------------------------------------------------------------------
         llm = self.provider.build_llm(
             self.cfg.llm,
             self.cfg.context_window,
@@ -772,6 +1066,7 @@ class RAGEngine:
             "tokens_in": total_tokens_in,
             "tokens_out": total_tokens_out,
             "elapsed": round(total_llm_time, 2),
+            "mode": "llm",
         }
 
     def _index_nodes_by_path(self) -> dict:

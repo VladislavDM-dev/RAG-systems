@@ -292,6 +292,8 @@ def engine_status():
 def memos():
     """Поиск всех служебных записок по теме: список документов с полным текстом.
 
+    По умолчанию — быстрый путь (гибрид FAISS+BM25, без LLM, ~50 мс).
+    use_llm=true — legacy батч-LLM-фильтр (~20 с на 200 доков).
     Полный текст собирается из индекса (docstore), файлы не парсятся повторно.
     """
     data = request.get_json(silent=True) or {}
@@ -299,11 +301,13 @@ def memos():
     if not prompt:
         return jsonify({"error": "Поле 'prompt' обязательно"}), 400
 
+    use_llm = bool(data.get("use_llm", False))
     result = engine.memos(
         prompt,
         temperature=data.get("temperature"),
         page_size=data.get("page_size", 50),
         max_pages=data.get("max_pages", 15),
+        use_llm=use_llm,
     )
     if result.get("error"):
         code = 503 if "синхронизац" in str(result["error"]).lower() or "не готов" in str(result["error"]).lower() else 500
@@ -313,14 +317,17 @@ def memos():
 
 @app.route(f"{API_PREFIX}/memos/stream", methods=["POST"])
 def memos_stream():
-    """Поиск служебных записок по теме с потоковым reasoning (SSE).
+    """Поиск служебных записок по теме с потоковым выводом (SSE).
 
-    События: reasoning / done / error. В done — documents с полным текстом.
+    Быстрый путь (по умолчанию): sources → done (без reasoning).
+    use_llm=true: reasoning → done (legacy LLM-фильтр).
     """
     data = request.get_json(silent=True) or {}
     prompt = (data.get("prompt") or "").strip()
     if not prompt:
         return jsonify({"error": "Поле 'prompt' обязательно"}), 400
+
+    use_llm = bool(data.get("use_llm", False))
 
     def generate():
         for event in engine.memos_stream(
@@ -328,6 +335,7 @@ def memos_stream():
             temperature=data.get("temperature"),
             page_size=data.get("page_size", 50),
             max_pages=data.get("max_pages", 15),
+            use_llm=use_llm,
         ):
             payload = {"type": event["type"], "data": event.get("data", "")}
             if event["type"] == "done":
@@ -337,6 +345,9 @@ def memos_stream():
                 payload["tokens_in"] = event.get("tokens_in")
                 payload["tokens_out"] = event.get("tokens_out")
                 payload["elapsed"] = event.get("elapsed")
+                payload["mode"] = event.get("mode", "fast")
+            elif event["type"] == "sources":
+                payload["data"] = event.get("data", [])
             yield f"data: {__import__('json').dumps(payload, ensure_ascii=False)}\n\n"
 
     return Response(generate(), mimetype="text/event-stream")

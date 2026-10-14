@@ -174,17 +174,20 @@ def _memos_answer(documents, prompt):
 
 
 def _stream_memos(rag, prompt, temperature):
-    """Поиск всех записок по теме через ядро: стримится reasoning батч-LLM,
-    в конце — события done с документами (название, полный путь, полный текст)."""
+    """Поиск всех записок по теме через ядро.
+
+    Быстрый путь (по умолчанию): sources → done (без reasoning, ~50 мс).
+    use_llm=true: reasoning → done (legacy LLM-фильтр).
+    """
     def emit(payload):
         return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
-    # Предпочитаем потоковый endpoint ядра (reasoning), иначе — fallback.
     if hasattr(rag, "memos_stream"):
         try:
             documents = []
             full_reasoning = []
             metrics = {}
+            mode = "fast"
             for event in rag.memos_stream(prompt, temperature=temperature):
                 etype = event.get("type")
                 if etype == "error":
@@ -194,8 +197,12 @@ def _stream_memos(rag, prompt, temperature):
                     part = event.get("data", "")
                     full_reasoning.append(part)
                     yield emit({"type": "reasoning", "data": part})
+                if etype == "sources":
+                    # Быстрый путь: список найденных файлов до сборки текста.
+                    yield emit({"type": "sources", "data": event.get("data", [])})
                 if etype == "done":
                     documents = event.get("documents") or []
+                    mode = event.get("mode", "fast")
                     for key in ("tokens_in", "tokens_out", "elapsed"):
                         if event.get(key) is not None:
                             metrics[key] = event.get(key)
@@ -205,6 +212,7 @@ def _stream_memos(rag, prompt, temperature):
                 "documents": documents,
                 "reasoning": "".join(full_reasoning),
                 "prompt": prompt,
+                "mode": mode,
                 "tokens_in": metrics.get("tokens_in"),
                 "tokens_out": metrics.get("tokens_out"),
                 "elapsed": metrics.get("elapsed"),
@@ -233,6 +241,7 @@ def _stream_memos(rag, prompt, temperature):
         "answer": _memos_answer(documents, prompt),
         "documents": documents,
         "prompt": prompt,
+        "mode": result.get("mode", "fast"),
     })
 
 

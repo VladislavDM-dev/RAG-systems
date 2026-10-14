@@ -84,26 +84,41 @@
 ### `POST /rag/memos`
 Поиск **всех** записок по теме, в ответе — полный текст документов (собирается из docstore индекса, файлы повторно не парсятся).
 
-Тело: `prompt` (обязательно), опц. `temperature` (по умолч. 0.0), `page_size` (50), `max_pages` (15).
+По умолчанию — **быстрый путь** (гибрид FAISS+BM25, ~50 мс, без LLM). `use_llm=true` — legacy LLM-фильтр (~20 с на 200 доков).
+
+Тело: `prompt` (обязательно), опц. `temperature` (0.0), `page_size` (50 = топ-N файлов в быстром пути), `max_pages` (15, только LLM-путь), `use_llm` (false).
 
 Ответ `200`:
 ```json
 {
   "ok": true,
-  "total": 3,
+  "total": 17,
   "pages": 1,
+  "mode": "fast",
+  "tokens_in": 0,
+  "tokens_out": 0,
+  "elapsed": 0.05,
   "documents": [
     { "file_name": "#297-….docx", "file_path": "C:\\…\\#297….docx", "text": "полный текст…" }
   ]
 }
 ```
+`mode`: `"fast"` (быстрый путь) или `"llm"` (use_llm=true). В быстром пути `tokens_in/out = 0`.
+
 Ошибки: `400` (нет prompt), `503` (идет синхронизация / индекс не готов), `500` (прочее).
 
 ### `POST /rag/memos/stream` (SSE)
-То же, но постранично стримится `reasoning` батч-LLM:
+То же, но потоково. События зависят от режима:
+
+**Быстрый путь (`use_llm=false`, по умолчанию):**
+- `sources`: `[{file_name, file_path, node_id, score}]` — найденные файлы (RRF-score);
+- `done`: `{documents, pages, prompt, tokens_in: 0, tokens_out: 0, elapsed, mode: "fast"}`.
+
+**LLM-путь (`use_llm=true`):**
 - `reasoning` — размышления батча;
-- `done`: `{documents, pages, prompt, tokens_in, tokens_out, elapsed}`;
-- `error`.
+- `done`: `{documents, pages, prompt, tokens_in, tokens_out, elapsed, mode: "llm"}`.
+
+Общее: `error`.
 
 ## 4.4 Индексация
 
@@ -224,7 +239,7 @@
 | GET | `/rag/engine/status` | JSON | полный статус движка |
 | POST | `/rag/agent/stream` | SSE | чат/агентный ответ |
 | POST | `/rag/memos` | JSON | все записки по теме |
-| POST | `/rag/memos/stream` | SSE | то же с reasoning |
+| POST | `/rag/memos/stream` | SSE | то же, sources+done (fast) / reasoning+done (llm) |
 | POST | `/rag/index` | JSON | запуск синхронизации (`?reset=true`) |
 | GET | `/rag/index/status` | JSON | статус синхронизации |
 | GET | `/rag/index/stats` | JSON | статистика |

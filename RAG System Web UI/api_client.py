@@ -137,8 +137,12 @@ class RAGClient:
         return self._request("post", "parse", json={"file_path": file_path})
 
     def memos(self, prompt: str, temperature: float = 0.2,
-              page_size: int = 50, max_pages: int = 15) -> dict:
-        """Поиск всех записок по теме (ядро отдаёт полный текст документов)."""
+              page_size: int = 50, max_pages: int = 15,
+              use_llm: bool = False) -> dict:
+        """Поиск всех записок по теме (ядро отдаёт полный текст документов).
+
+        use_llm=True — legacy LLM-фильтр (медленно); по умолчанию быстрый путь.
+        """
         return self._request(
             "post",
             "memos",
@@ -147,21 +151,24 @@ class RAGClient:
                 "temperature": temperature,
                 "page_size": page_size,
                 "max_pages": max_pages,
+                "use_llm": use_llm,
             },
             timeout=900,
         )
 
     def memos_stream(self, prompt: str, temperature: float = 0.2,
-                     page_size: int = 50, max_pages: int = 15) -> Iterator[dict]:
-        """Поиск записок по теме с потоковым reasoning (SSE).
+                     page_size: int = 50, max_pages: int = 15,
+                     use_llm: bool = False) -> Iterator[dict]:
+        """Поиск записок по теме с потоковым выводом (SSE).
 
-        События: reasoning / done (documents) / error.
+        Быстрый путь: sources → done. use_llm=true: reasoning → done.
         """
         payload = {
             "prompt": prompt,
             "temperature": temperature,
             "page_size": page_size,
             "max_pages": max_pages,
+            "use_llm": use_llm,
         }
         try:
             resp = requests.post(

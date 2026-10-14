@@ -22,7 +22,8 @@
 
 | Файл | Что проверяет |
 |---|---|
-| `test_api.py` | health/info/engine_status/config (get/patch: валидные поля, невалидные, bad provider), folders roundtrip, provider set/switch (подстановка DEFAULT_URLS, autofix моделей, отключение autofix при недоступном бэкенде), models, parse (нет пути / файл не найден / реальный файл из `out/`), index_status, parse_stream, agent_stream (нет prompt / нет индекса / эмит событий), memos (нет prompt / без индекса / documents / stream reasoning) |
+| `test_api.py` | health/info/engine_status/config (get/patch: валидные поля, невалидные, bad provider), folders roundtrip, provider set/switch (подстановка DEFAULT_URLS, autofix моделей, отключение autofix при недоступном бэкенде), models, parse (нет пути / файл не найден / реальный файл из `out/`), index_status, parse_stream, agent_stream (нет prompt / нет индекса / эмит событий), memos (нет prompt / без индекса / documents / use_llm param / stream reasoning / stream fast path) |
+| `test_hybrid.py` | лемматизация (`lemmatize_word/text`, `tokenize_lemmas`), BM25 build/save/load roundtrip, load при отсутствии кэша |
 | `test_config.py` | дефолты, update → changed, отсутствие изменений, save/load roundtrip, to_dict |
 | `test_file_hash_manager.py` | иниц. БД, save/get, get по отсутствующему, overwrite, remove, get_all_paths/hashes, close (освобождение файла) |
 | `test_parsers.py` | `out/` содержит `.docx`, `test_parse_all_docx_files` (<ins>парсит ВСЕ `.docx` из `../out` через Word COM — медленный, требует ≥49 файлов</ins>), метаданные, отсутствующий файл |
@@ -41,7 +42,7 @@
 - Аутентификация: страница логина, редирект анонима, неверный пароль, bad CSRF, logout.
 - Чат: страница `/`, CRUD диалогов, roundtrip сообщений, CRUD избранного.
 - Мастер: `memo_template`, `memo_state` save/load/clear, требование объекта.
-- Записки (`/memos`): рендер документов, стриминг reasoning, пусто, ошибка, авто-детекция (без команды), НЕ срабатывает для обычных вопросов и при явном `system_prompt`.
+- Записки (`/memos`): рендер документов, стриминг reasoning (legacy), sources+done (fast path), пусто, ошибка, авто-детекция (без команды), НЕ срабатывает для обычных вопросов и при явном `system_prompt`.
 - Reasoning: стриминг и склейка в `done`.
 - Админка: требует admin, users create/delete, запрет удаления себя, info, status.
 - Расписание: админ-CRUD через прокси ядра, валидация (дни, HH:MM, текст), 404 для несуществующего id, блокировка стрима/статуса для не-админа, inactive не применяется.

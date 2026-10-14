@@ -264,13 +264,19 @@ def test_memos_emits_documents(client, monkeypatch):
     engine = app_module.engine
     calls = {}
 
-    def fake_memos(prompt, temperature=None, page_size=30, max_pages=15):
+    def fake_memos(prompt, temperature=None, page_size=30, max_pages=15,
+                   use_llm=False):
         calls["prompt"] = prompt
         calls["temperature"] = temperature
+        calls["use_llm"] = use_llm
         return {
             "ok": True,
             "total": 1,
             "pages": 2,
+            "mode": "fast",
+            "tokens_in": 0,
+            "tokens_out": 0,
+            "elapsed": 0.05,
             "documents": [{
                 "file_name": "a.docx",
                 "file_path": "C:\\out\\a.docx",
@@ -294,18 +300,45 @@ def test_memos_emits_documents(client, monkeypatch):
     assert data["documents"][0]["text"] == "Служебная записка №1"
     assert calls["prompt"] == "канцтовары"
     assert calls["temperature"] == 0.1
+    assert calls["use_llm"] is False  # по умолчанию — быстрый путь
 
 
-def test_memos_stream_emits_reasoning(client, monkeypatch):
-    """/rag/memos/stream отдаёт reasoning-события и финальный done."""
+def test_memos_use_llm_param(client, monkeypatch):
+    """use_llm=true пробрасывается в engine.memos (legacy LLM-фильтр)."""
     import app as app_module
 
     engine = app_module.engine
     calls = {}
 
-    def fake_memos_stream(prompt, temperature=None, page_size=30, max_pages=15):
+    def fake_memos(prompt, temperature=None, page_size=30, max_pages=15,
+                   use_llm=False):
+        calls["use_llm"] = use_llm
+        return {"ok": True, "total": 0, "documents": [], "mode": "llm"}
+
+    monkeypatch.setattr(engine, "memos", fake_memos)
+    engine.is_initialized = True
+    engine.index = object()
+
+    r = client.post(
+        "/rag/memos",
+        json={"prompt": "канцтовары", "use_llm": True},
+    )
+    assert r.status_code == 200
+    assert calls["use_llm"] is True
+
+
+def test_memos_stream_emits_reasoning(client, monkeypatch):
+    """/rag/memos/stream (use_llm=true) отдаёт reasoning-события и финальный done."""
+    import app as app_module
+
+    engine = app_module.engine
+    calls = {}
+
+    def fake_memos_stream(prompt, temperature=None, page_size=30, max_pages=15,
+                          use_llm=False):
         calls["prompt"] = prompt
         calls["temperature"] = temperature
+        calls["use_llm"] = use_llm
         yield {"type": "reasoning", "data": "Батч 1: ищу упоминания"}
         yield {"type": "reasoning", "data": "Батч 2: путь подходит"}
         yield {
@@ -317,6 +350,7 @@ def test_memos_stream_emits_reasoning(client, monkeypatch):
             }],
             "pages": 2,
             "prompt": prompt,
+            "mode": "llm",
         }
 
     monkeypatch.setattr(engine, "memos_stream", fake_memos_stream)
@@ -325,7 +359,7 @@ def test_memos_stream_emits_reasoning(client, monkeypatch):
 
     r = client.post(
         "/rag/memos/stream",
-        json={"prompt": "канцтовары", "temperature": 0.1},
+        json={"prompt": "канцтовары", "temperature": 0.1, "use_llm": True},
     )
     assert r.status_code == 200
     assert "text/event-stream" in r.headers.get("Content-Type", "")
@@ -341,8 +375,64 @@ def test_memos_stream_emits_reasoning(client, monkeypatch):
     assert done["type"] == "done"
     assert done["documents"][0]["file_path"] == "C:\\out\\a.docx"
     assert done["pages"] == 2
+    assert done.get("mode") == "llm"
     assert calls["prompt"] == "канцтовары"
     assert calls["temperature"] == 0.1
+    assert calls["use_llm"] is True
+
+
+def test_memos_stream_fast_path(client, monkeypatch):
+    """Быстрый путь /memos/stream: sources → done, без reasoning."""
+    import app as app_module
+
+    engine = app_module.engine
+
+    def fake_memos_stream(prompt, temperature=None, page_size=30, max_pages=15,
+                          use_llm=False):
+        assert use_llm is False
+        yield {
+            "type": "sources",
+            "data": [{"file_name": "a.docx", "file_path": "C:\\out\\a.docx", "score": 0.85}],
+        }
+        yield {
+            "type": "done",
+            "documents": [{
+                "file_name": "a.docx",
+                "file_path": "C:\\out\\a.docx",
+                "text": "Служебная записка №1",
+            }],
+            "pages": 1,
+            "prompt": prompt,
+            "tokens_in": 0,
+            "tokens_out": 0,
+            "elapsed": 0.05,
+            "mode": "fast",
+        }
+
+    monkeypatch.setattr(engine, "memos_stream", fake_memos_stream)
+    engine.is_initialized = True
+    engine.index = object()
+
+    r = client.post(
+        "/rag/memos/stream",
+        json={"prompt": "канцтовары"},
+    )
+    assert r.status_code == 200
+
+    import json as _json
+    events = []
+    for line in r.get_data(as_text=True).splitlines():
+        if line.startswith("data: "):
+            events.append(_json.loads(line[6:]))
+
+    assert events[0]["type"] == "sources"
+    assert events[0]["data"][0]["file_path"] == "C:\\out\\a.docx"
+    done = events[1]
+    assert done["type"] == "done"
+    assert done["mode"] == "fast"
+    assert done["documents"][0]["file_path"] == "C:\\out\\a.docx"
+    # В быстром пути нет reasoning-событий
+    assert not any(e["type"] == "reasoning" for e in events)
 
 
 def test_agent_stream_without_index(client):

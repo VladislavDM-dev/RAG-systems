@@ -117,24 +117,37 @@ flowchart TD
 
 ## 1.5 Поток поиска записок (`/memos`)
 
-Поиск **всех** служебных записок по теме с полным текстом. Использует постраничный обход индекса без повторов:
+Поиск **всех** служебных записок по теме с полным текстом. По умолчанию — **быстрый путь** (~50 мс, без LLM): гибридный ретрив (FAISS + BM25 по lemma-токенам) → агрегация score по файлам → топ-N. Legacy LLM-фильтр доступен через `use_llm=true`.
 
 ```mermaid
 flowchart LR
-    A["prompt по теме"] --> B["Семантический ретрив\nretriever.retrieve(prompt)"]
-    B --> E["candidate_pairs: [(file_path, node)]"]
-    E --> F{"for page in 1..max_pages"}
-    F -->|батч page_size чанков| G["Батч-LLM (stream_chat)\nс системным промптом _MEMO_BATCH_SYSTEM_PROMPT"]
-    G --> H["reasoning стримится пользователю"]
-    G --> I["Парсинг ответа: строки 'ПУТЬ: <путь>'"]
-    I --> J{"В батче есть новые пути?"}
-    J -->|да| K["добавить в found_paths, перейти к след. батчу"]
-    J -->|"нет / 'НОВЫХ ЗАПИСОК НЕТ'"| L["Завершить"]
-    L --> M["Сборка полного текста из docstore\n(_assemble_document_text по start_char_idx)"]
-    M --> N["done: {documents, pages, tokens_in/out, elapsed}"]
+    A["prompt по теме"] --> B{"use_llm?"}
+    B -->|"false (default)"| C["Гибридный ретрив\nFAISS (L2, смысл)\n+ BM25 (lemma-токены, точные совпадения/опечатки)"]
+    C --> D["RRF-слияние рангов (k=60)\n+ min L2 per file (для отсечки)"]
+    D --> E["Агрегация: max RRF-score на файл"]
+    E --> F["Отсечка: top-N по RRF (N=page_size, cap 40)\n+ L2 <= best×1.4 (страховка)"]
+    F --> G["Сборка полного текста из docstore"]
+    G --> H["sources → done: {documents, pages, elapsed}"]
+    B -->|"true (legacy)"| I["Постраничный батч-LLM-фильтр\n_MEMO_BATCH_SYSTEM_PROMPT"]
+    I --> J["reasoning стримится пользователю"]
+    I --> K["Парсинг: 'ПУТЬ: <путь>' / 'НОВЫХ ЗАПИСОК НЕТ'"]
+    K --> L["Сборка полного текста из docstore"]
+    L --> M["done: {documents, tokens_in/out, elapsed}"]
 ```
 
-Ключевые параметры: `page_size=50`, `max_pages=15`. Повторы исключаются через `node_ids` (множество `seen_ids`), а для постраничности используется подход с `exclude_node_ids` (см. `_ExcludeNodeIdsPostprocessor`).
+**Быстрый путь (по умолчанию):**
+- FAISS (IndexFlatL2) — смысловой поиск по эмбеддингам чанков.
+- BM25 (rank_bm25.BM25Okapi) — точные совпадения lemma-токенов; лемматизация через pymorphy3 (`text_norm.py`). Ловит морфологические варианты и опечатки, которые FAISS пропускает.
+- RRF (Reciprocal Rank Fusion, k=60) — объединение рангов обоих ретривов.
+- Отсечка: top-N по RRF-score (N=`page_size`, максимум 40 файлов) + L2-проверка `best×1.4`.
+- BM25 строится при синхронизации и сохраняется в `.cache/bm25.pkl` (+ `bm25_ids.pkl`); ленивая сборка при первом запросе, если кэша нет.
+
+**Legacy LLM-путь (`use_llm=true`):**
+- Постраничный обход кандидатов (батчи по `page_size` чанков, до `max_pages`).
+- Батч-LLM (`stream_chat`) с системным промптом `_MEMO_BATCH_SYSTEM_PROMPT` стримит `reasoning` и возвращает `ПУТЬ: <путь>` / `НОВЫХ ЗАПИСОК НЕТ`.
+- Оставлен для отладки/сравнения; на 200 доков занимает ~20 с (vs ~50 мс у быстрого пути).
+
+Ключевые параметры: `page_size=50` (в быстром пути = топ-N файлов), `max_pages=15` (только для LLM-пути). Метрики `tokens_in/out` в быстром пути = 0 (LLM не вызывается).
 
 ## 1.6 Схема БД Web UI
 

@@ -18,7 +18,7 @@
 - иначе если клиент не задал `system_prompt` и `detect_memos_topic(prompt)` вернул тему → поиск записок (temperature 0.0);
 - иначе — обычный RAG-ответ SSE.
 
-Проксирует события ядра 1:1: `sources / reasoning / token / done / error`. В `done` дополнительно: `answer, reasoning, sources` (дедуплицированы), `tokens_in, tokens_out, elapsed`. Для ветки записок `done` содержит `documents` и `answer` (сводка из `_memos_answer`).
+Проксирует события ядра 1:1: `sources / reasoning / token / done / error`. В `done` дополнительно: `answer, reasoning, sources` (дедуплицированы), `tokens_in, tokens_out, elapsed, mode`. Для ветки записок: быстрый путь ядра (по умолч.) → `sources` + `done` (без reasoning, ~50 мс); `use_llm=true` → `reasoning` + `done`. `done` содержит `documents` и `answer` (сводка из `_memos_answer`).
 
 Пример запроса:
 ```json

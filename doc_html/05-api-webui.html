@@ -43,7 +43,7 @@
 <li>иначе если клиент не задал <code>system_prompt</code> и <code>detect_memos_topic(prompt)</code> вернул тему → поиск записок (temperature 0.0);</li>
 <li>иначе — обычный RAG-ответ SSE.</li>
 </ul>
-<p>Проксирует события ядра 1:1: <code>sources / reasoning / token / done / error</code>. В <code>done</code> дополнительно: <code>answer, reasoning, sources</code> (дедуплицированы), <code>tokens_in, tokens_out, elapsed</code>. Для ветки записок <code>done</code> содержит <code>documents</code> и <code>answer</code> (сводка из <code>_memos_answer</code>).</p>
+<p>Проксирует события ядра 1:1: <code>sources / reasoning / token / done / error</code>. В <code>done</code> дополнительно: <code>answer, reasoning, sources</code> (дедуплицированы), <code>tokens_in, tokens_out, elapsed, mode</code>. Для ветки записок: быстрый путь ядра (по умолч.) → <code>sources</code> + <code>done</code> (без reasoning, ~50 мс); <code>use_llm=true</code> → <code>reasoning</code> + <code>done</code>. <code>done</code> содержит <code>documents</code> и <code>answer</code> (сводка из <code>_memos_answer</code>).</p>
 <p>Пример запроса:</p>
 <pre><code class="language-json">{ &quot;prompt&quot;: &quot;Чем занимается отдел закупок?&quot;, &quot;temperature&quot;: 0.3 }</code></pre>
 <h3><code>GET /api/status</code></h3>

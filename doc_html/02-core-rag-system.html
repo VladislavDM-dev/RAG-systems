@@ -133,11 +133,19 @@
 <li><code>error</code> — на исключение.</li>
 </ol>
 <h3><code>memos</code> / <code>memos_stream</code> — поиск всех записок</h3>
-<p>Детально в документе 01 (раздел 1.5). Кандидаты отбираются <b>только семантическим ретривом по содержимому</b> (имя файла не участвует — иначе возможны потери, если тема не отражена в названии). Ключевые помощники:</p>
+<p>Детально в документе 01 (раздел 1.5). По умолчанию — быстрый путь (гибрид FAISS+BM25, агрегация score по файлам, без LLM, ~50 мс). <code>use_llm=true</code> — legacy батч-LLM-фильтр (~20 с на 200 доков).</p>
+<p><b>Быстрый путь:</b></p>
 <ul>
-<li><code>_MEMO_BATCH_SYSTEM_PROMPT</code> — промпт батча, просит вернуть только <code>ПУТЬ: <полный путь></code> по строкам или ровно «НОВЫХ ЗАПИСОК НЕТ».</li>
+<li><code>_hybrid_retrieve</code> / инлайн-логика в <code>memos_stream</code> — FAISS (L2) + BM25 (lemma-токены через <code>text_norm.tokenize_lemmas</code>), RRF-слияние.</li>
+<li>Агрегация: max RRF-score на файл, min L2 для отсечки (<code>best×1.4</code>), top-N (N=<code>page_size</code>, cap 40).</li>
+<li>BM25 кэш: <code>.cache/bm25.pkl</code> + <code>bm25_ids.pkl</code>; сборка при синке / лениво.</li>
+</ul>
+<p><b>Общие помощники:</b></p>
+<ul>
+<li><code>_MEMO_BATCH_SYSTEM_PROMPT</code> — промпт батча для LLM-пути, просит вернуть только <code>ПУТЬ: <полный путь></code> по строкам или ровно «НОВЫХ ЗАПИСОК НЕТ».</li>
 <li><code>_index_nodes_by_path()</code> — <code>file_path -> [nodes]</code> из docstore (O(N), узлы сортируются по <code>start_char_idx</code>).</li>
 <li><code>_assemble_document_text(path, nodes)</code> — полный текст через start_char_idx, перекрытия (<code>chunk_overlap</code>) вырезаются. Файлы повторно не парсятся, Word COM не задействуется.</li>
+<li><code>rag_engine/text_norm.py</code> — лемматизация pymorphy3 (<code>lemmatize_word</code>, <code>lemmatize_text</code>, <code>tokenize_lemmas</code>), fallback на lowercase без pymorphy.</li>
 </ul>
 <h3>Управление конфигом во время работы</h3>
 <p><code>update_config(**kwargs) -> {"changed": [...]}</code>:</p>
